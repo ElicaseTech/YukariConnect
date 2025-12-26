@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http.HttpResults;
 using YukariConnect.Endpoints;
+using YukariConnect.Services;
 
 namespace YukariConnect
 {
@@ -17,6 +18,7 @@ namespace YukariConnect
 
             // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
             builder.Services.AddOpenApi();
+            builder.Services.AddHostedService<EasyTierResourceInitializer>();
 
             var app = builder.Build();
 
