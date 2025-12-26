@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using YukariConnect.Endpoints;
 using YukariConnect.Services;
+using YukariConnect.Minecraft.Services;
 
 namespace YukariConnect
 {
@@ -19,8 +20,8 @@ namespace YukariConnect
             builder.Services.AddHostedService<EasyTierResourceInitializer>();
 
             // Register Minecraft LAN services
-            builder.Services.AddSingleton<Minecraft.MinecraftLanState>();
-            builder.Services.AddHostedService<Minecraft.MinecraftLanListener>();
+            builder.Services.AddSingleton<MinecraftLanState>();
+            builder.Services.AddHostedService<MinecraftLanListener>();
 
             var app = builder.Build();
 
