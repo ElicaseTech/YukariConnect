@@ -28,7 +28,7 @@ public sealed partial class ScaffoldingClient : IAsyncDisposable
     {
         _host = host;
         _port = port;
-        _timeout = timeout ?? TimeSpan.FromSeconds(64);
+        _timeout = timeout ?? TimeSpan.FromSeconds(10); // Reduced from 64s to 10s for faster feedback
         _logger = logger;
     }
 
@@ -39,6 +39,9 @@ public sealed partial class ScaffoldingClient : IAsyncDisposable
     {
         if (_client != null && _client.Connected) return;
 
+        _logger?.LogInformation("ConnectAsync: Starting connection to {Host}:{Port}, timeout={Timeout}s",
+            _host, _port, _timeout.TotalSeconds);
+
         _client = new TcpClient();
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
@@ -46,8 +49,24 @@ public sealed partial class ScaffoldingClient : IAsyncDisposable
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
             _cts.Token, timeoutCts.Token);
 
-        await _client.ConnectAsync(_host, _port, linkedCts.Token);
+        _logger?.LogInformation("ConnectAsync: Calling TcpClient.ConnectAsync...");
+        try
+        {
+            await _client.ConnectAsync(_host, _port, linkedCts.Token);
+            _logger?.LogInformation("ConnectAsync: TcpClient.ConnectAsync completed");
+        }
+        catch (OperationCanceledException)
+        {
+            _logger?.LogError("ConnectAsync: Connection timed out after {Timeout}s", _timeout.TotalSeconds);
+            throw;
+        }
+
         _stream = _client.GetStream();
+        _logger?.LogInformation("ConnectAsync: Got NetworkStream");
+
+        // Disable Nagle's algorithm for immediate responses
+        _client.Client.NoDelay = true;
+        _logger?.LogInformation("ConnectAsync: NoDelay enabled, connection complete");
     }
 
     /// <summary>
@@ -71,6 +90,18 @@ public sealed partial class ScaffoldingClient : IAsyncDisposable
     private async Task SendRequestAsyncInternal(string kind, byte[] body, CancellationToken ct)
     {
         var kindBytes = Encoding.UTF8.GetBytes(kind);
+
+        // Log TCP send
+        _logger?.LogInformation("[TCP-Send] Kind={Kind}, BodyLength={BodyLength}", kind, body.Length);
+        if (body.Length > 0 && body.Length <= 512)
+        {
+            _logger?.LogInformation("[TCP-Send] Body={Body}", Encoding.UTF8.GetString(body));
+        }
+        else if (body.Length > 512)
+        {
+            _logger?.LogInformation("[TCP-Send] Body (first 512 bytes)={Body}",
+                Encoding.UTF8.GetString(body.AsSpan(0, 512)));
+        }
 
         // Write: kind length (1 byte)
         _stream!.WriteByte((byte)kindBytes.Length);
@@ -109,6 +140,18 @@ public sealed partial class ScaffoldingClient : IAsyncDisposable
         var data = new byte[dataLength];
         if (dataLength > 0)
             await ReadExactAsync(data, ct);
+
+        // Log TCP receive
+        _logger?.LogInformation("[TCP-Recv] Status={Status}, DataLength={DataLength}", status, dataLength);
+        if (dataLength > 0 && dataLength <= 512)
+        {
+            _logger?.LogInformation("[TCP-Recv] Data={Data}", Encoding.UTF8.GetString(data));
+        }
+        else if (dataLength > 512)
+        {
+            _logger?.LogInformation("[TCP-Recv] Data (first 512 bytes)={Data}",
+                Encoding.UTF8.GetString(data.AsSpan(0, 512)));
+        }
 
         return new ScaffoldingResponse
         {
@@ -189,7 +232,8 @@ public sealed partial class ScaffoldingClient : IAsyncDisposable
             Vendor = vendor
         };
 
-        var body = JsonSerializer.SerializeToUtf8Bytes(request);
+        // Use source generator for AOT compatibility
+        var body = JsonSerializer.SerializeToUtf8Bytes(request, ScaffoldingJsonContext.Default.PlayerPingRequest);
         var response = await SendRequestAsync("c:player_ping", body, ct);
 
         if (!response.IsSuccess)
@@ -206,8 +250,21 @@ public sealed partial class ScaffoldingClient : IAsyncDisposable
         if (!response.IsSuccess)
             throw new InvalidOperationException($"c:player_profiles_list failed: {response.GetErrorMessage()}");
 
-        return JsonSerializer.Deserialize<ScaffoldingProfile[]>(response.Data)
-            ?? Array.Empty<ScaffoldingProfile>();
+        // Use source generator for AOT compatibility
+        // Server returns DTO format (kind as string), need to deserialize as DTO first then convert
+        var dtoProfiles = JsonSerializer.Deserialize(response.Data, ScaffoldingJsonContext.Default.ListScaffoldingProfileDto);
+
+        if (dtoProfiles == null)
+            return Array.Empty<ScaffoldingProfile>();
+
+        // Convert DTO to internal format
+        return dtoProfiles.Select(dto => new ScaffoldingProfile
+        {
+            Name = dto.Name,
+            MachineId = dto.MachineId,
+            Vendor = dto.Vendor,
+            Kind = ScaffoldingProfileKind.FromString(dto.Kind)
+        }).ToArray();
     }
 
     public async ValueTask DisposeAsync()

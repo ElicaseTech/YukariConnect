@@ -87,8 +87,9 @@ public sealed class RoomRuntime
     public ushort? MinecraftPort { get; set; }
 
     // Center discovery (for guest)
-    public System.Net.IPAddress? CenterIp { get; set; }
+    public System.Net.IPAddress? CenterIp { get; set; }  // Original virtual IP of center
     public ushort? CenterScaffoldingPort { get; set; }
+    public System.Net.IPAddress? CenterVirtualIp { get; set; }  // Saved for Minecraft forwarding
 
     // Player info
     public required string MachineId { get; init; }

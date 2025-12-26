@@ -375,24 +375,6 @@ public sealed partial class RoomController
                 _logger.LogWarning("Minecraft server disappeared - c:server_port will return status=32");
             }
 
-            // Restart FakeServer with new port
-            if (_runtime.FakeServer != null)
-            {
-                try { await _runtime.FakeServer.DisposeAsync(); } catch { }
-                _runtime.FakeServer = null;
-            }
-
-            if (_runtime.MinecraftPort.HasValue)
-            {
-                var motd = $"{_runtime.PlayerName}'s World";
-                _runtime.FakeServer = new MinecraftFakeServer(
-                    _runtime.MinecraftPort.Value,
-                    motd,
-                    logger: _serviceProvider.GetRequiredService<ILogger<MinecraftFakeServer>>());
-                await _runtime.FakeServer.StartAsync(ct);
-                _logger.LogInformation("FakeServer broadcasting on port {Port}", _runtime.MinecraftPort);
-            }
-
             EmitStatus();
         }
 

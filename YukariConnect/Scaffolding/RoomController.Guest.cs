@@ -221,20 +221,109 @@ public sealed partial class RoomController
         _runtime.CenterScaffoldingPort = center.Port;
         _logger.LogInformation("Center found: {Host} at {Ip}:{Port}", center.Hostname, center.Ip, center.Port);
 
+        // Wait for P2P connection to establish (check if tx_bytes > 0)
+        _logger.LogInformation("Waiting for P2P connection to center...");
+        int connectionCheckCount = 0;
+        const int maxConnectionChecks = 30; // 30 seconds
+        bool connectionEstablished = false;
+
+        while (connectionCheckCount < maxConnectionChecks)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(1), ct);
+
+            // Check peers again to see if connection is established
+            var peersCheck = await cliService.PeersAsync(ct);
+            if (peersCheck != null)
+            {
+                foreach (var peer in peersCheck.RootElement.EnumerateArray())
+                {
+                    var hostname = peer.GetProperty("hostname").GetString();
+                    if (hostname == center.Hostname)
+                    {
+                        var hasTxBytes = peer.TryGetProperty("tx_bytes", out var txBytesProp);
+                        var hasRxBytes = peer.TryGetProperty("rx_bytes", out var rxBytesProp);
+
+                        if (hasTxBytes && hasRxBytes)
+                        {
+                            var txBytesStr = txBytesProp.GetString();
+                            var rxBytesStr = rxBytesProp.GetString();
+
+                            // Check if there's any data transfer (not "0 B")
+                            if (txBytesStr != "0 B" || rxBytesStr != "0 B")
+                            {
+                                _logger.LogInformation("P2P connection established: tx={Tx}, rx={Rx}",
+                                    txBytesStr, rxBytesStr);
+                                connectionEstablished = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (connectionEstablished)
+                break;
+
+            connectionCheckCount++;
+            if (connectionCheckCount % 5 == 0)
+            {
+                _logger.LogInformation("Still waiting for P2P connection... ({Count}s)", connectionCheckCount);
+            }
+        }
+
+        if (!connectionEstablished)
+        {
+            _logger.LogWarning("P2P connection not established after {Seconds}s, trying anyway...", maxConnectionChecks);
+        }
+
+        // Set up port forwarding for Scaffolding client (like Terracotta does)
+        // Forward local port to remote center's Scaffolding server
+        ushort localForwardPort = _runtime.CenterScaffoldingPort.Value; // Use same port locally
+        var localAddr = $"0.0.0.0:{localForwardPort}";
+        var remoteAddr = $"{center.Ip}:{center.Port}";
+
+        _logger.LogInformation("Setting up port forwarding: {Local} -> {Remote}", localAddr, remoteAddr);
+        var forwardOk = await cliService.AddPortForwardAsync("tcp", localAddr, remoteAddr, ct);
+
+        if (!forwardOk)
+        {
+            _lastError = "Failed to add port forwarding for Scaffolding client";
+            _state = RoomStateKind.Error;
+            EmitStatus();
+            return;
+        }
+
+        _logger.LogInformation("Port forwarding added successfully");
+
+        // Save the original virtual IP for Minecraft forwarding
+        _runtime.CenterVirtualIp = center.Ip;
+
+        // Update runtime to use localhost instead of virtual IP for Scaffolding client
+        _runtime.CenterIp = IPAddress.Loopback;
+        _runtime.CenterScaffoldingPort = localForwardPort;
+
         _centerDiscoveryStart = default;
         _state = RoomStateKind.Guest_ConnectingScaffolding;
+        _logger.LogInformation("Transitioning to Guest_ConnectingScaffolding state");
         EmitStatus();
+        _logger.LogInformation("State transition completed, new state={State}", _state);
     }
 
     private async Task StepGuest_ConnectingScaffoldingAsync(CancellationToken ct)
     {
+        _logger.LogInformation("StepGuest_ConnectingScaffoldingAsync called");
+
         if (_runtime!.ScaffoldingClient != null)
         {
             // Already connected, move to running
+            _logger.LogInformation("ScaffoldingClient already exists, moving to running");
             _state = RoomStateKind.Guest_Running;
             EmitStatus();
             return;
         }
+
+        _logger.LogInformation("Creating ScaffoldingClient for {Ip}:{Port}",
+            _runtime.CenterIp, _runtime.CenterScaffoldingPort);
 
         var client = new ScaffoldingClient(
             _runtime.CenterIp!.ToString(),
@@ -243,10 +332,12 @@ public sealed partial class RoomController
 
         try
         {
+            _logger.LogInformation("Connecting to Scaffolding server...");
             await client.ConnectAsync(ct);
             _logger.LogInformation("Connected to scaffolding server");
 
             // Verify fingerprint
+            _logger.LogInformation("Verifying fingerprint with c:ping...");
             if (!await client.PingAsync(ct))
             {
                 _lastError = "Fingerprint verification failed";
@@ -255,22 +346,27 @@ public sealed partial class RoomController
                 EmitStatus();
                 return;
             }
+            _logger.LogInformation("Fingerprint verified successfully");
 
             _runtime.ScaffoldingClient = client;
 
             // Get protocols
+            _logger.LogInformation("Getting supported protocols...");
             var protocols = await client.GetProtocolsAsync(ct);
             _logger.LogInformation("Supported protocols: {Protocols}", string.Join(", ", protocols));
 
             // Register player
+            _logger.LogInformation("Registering player with c:player_ping...");
             await client.PlayerPingAsync(_runtime.PlayerName, _runtime.MachineId, _runtime.Vendor, ct);
+            _logger.LogInformation("Player registered successfully");
 
-            _logger.LogInformation("Guest connected successfully");
+            _logger.LogInformation("Guest connected successfully, transitioning to running");
             _state = RoomStateKind.Guest_Running;
             EmitStatus();
         }
         catch (Exception ex)
         {
+            _logger.LogError(ex, "Scaffolding connection failed");
             _lastError = $"Connection failed: {ex.Message}";
             await client.DisposeAsync();
             _state = RoomStateKind.Error;
@@ -280,6 +376,7 @@ public sealed partial class RoomController
 
     private DateTime _lastHeartbeat = DateTime.MinValue;
     private DateTime _lastPlayerListCheck = DateTime.MinValue;
+    private bool _minecraftForwardSetup = false;
 
     private async Task StepGuest_RunningAsync(CancellationToken ct)
     {
@@ -323,10 +420,65 @@ public sealed partial class RoomController
                 {
                     _runtime.MinecraftPort = port;
                     _logger.LogInformation("Minecraft server port: {Port}", port);
+
+                    // Set up port forwarding for Minecraft (like Terracotta does)
+                    // Forward local port to Host's Minecraft server at virtual IP
+                    var mcPort = port.Value;
+                    var localMcAddr = $"0.0.0.0:{mcPort}";
+                    var remoteMcAddr = $"{_runtime.CenterVirtualIp}:{mcPort}";
+
+                    _logger.LogInformation("Setting up Minecraft port forwarding: {Local} -> {Remote}",
+                        localMcAddr, remoteMcAddr);
+
+                    var cliService = _serviceProvider.GetRequiredService<EasyTierCliService>();
+
+                    // Set up TCP forwarding for Minecraft
+                    var tcpForwardOk = await cliService.AddPortForwardAsync("tcp", localMcAddr, remoteMcAddr, ct);
+                    if (!tcpForwardOk)
+                    {
+                        _logger.LogWarning("Failed to add TCP port forwarding for Minecraft");
+                    }
+
+                    // Set up UDP forwarding for Minecraft
+                    var udpForwardOk = await cliService.AddPortForwardAsync("udp", localMcAddr, remoteMcAddr, ct);
+                    if (!udpForwardOk)
+                    {
+                        _logger.LogWarning("Failed to add UDP port forwarding for Minecraft");
+                    }
+
+                    if (tcpForwardOk || udpForwardOk)
+                    {
+                        _logger.LogInformation("Minecraft port forwarding added successfully");
+                        _minecraftForwardSetup = true;
+
+                        // Start FakeServer to broadcast MC server to Guest's local network
+                        // This allows other players on Guest's LAN to see and join the game
+                        // Get host player name from profiles list
+                        var profiles = await _runtime.ScaffoldingClient.GetPlayerProfilesAsync(ct);
+                        var hostProfile = profiles.FirstOrDefault(p => p.Kind.Value == "HOST");
+                        var hostName = hostProfile?.Name ?? _runtime.PlayerName;
+
+                        // Generate MOTD with vendor info (shorten it if too long)
+                        var vendor = _runtime.Vendor;
+                        if (vendor.Length > 30)
+                            vendor = vendor.Substring(0, 27) + "...";
+
+                        var motd = $"{hostName}'s World [{vendor}]";
+                        _runtime.FakeServer = new MinecraftFakeServer(
+                            mcPort,
+                            motd,
+                            logger: _serviceProvider.GetRequiredService<ILogger<MinecraftFakeServer>>());
+                        await _runtime.FakeServer.StartAsync(ct);
+                        _logger.LogInformation("FakeServer broadcasting locally on port {Port} with MOTD: {Motd}", mcPort, motd);
+                    }
+
                     EmitStatus();
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to get Minecraft server port");
+            }
         }
 
         await Task.Delay(_tick, ct);

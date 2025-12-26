@@ -149,6 +149,7 @@ public sealed class CenterInfo
 [JsonSerializable(typeof(PlayerPingRequest))]
 [JsonSerializable(typeof(ScaffoldingProfile))]
 [JsonSerializable(typeof(ScaffoldingProfileDto))]
+[JsonSerializable(typeof(List<ScaffoldingProfile>))]
 [JsonSerializable(typeof(List<ScaffoldingProfileDto>))]
 public partial class ScaffoldingJsonContext : JsonSerializerContext
 {
