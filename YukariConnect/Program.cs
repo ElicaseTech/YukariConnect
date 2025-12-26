@@ -22,6 +22,7 @@ namespace YukariConnect
             // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
             builder.Services.AddOpenApi();
             builder.Services.AddHostedService<EasyTierResourceInitializer>();
+            builder.Services.AddSingleton<EasyTierCliService>();
 
             // Register Minecraft LAN services
             builder.Services.AddSingleton<MinecraftLanState>();

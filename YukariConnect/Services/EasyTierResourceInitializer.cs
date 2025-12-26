@@ -1,6 +1,8 @@
 using System.IO.Compression;
 using System.Net.Http;
 using System.Text.Json;
+using System.Runtime.InteropServices;
+using System.Formats.Tar;
 
 namespace YukariConnect.Services
 {
@@ -30,11 +32,37 @@ namespace YukariConnect.Services
                 var assets = root.GetProperty("assets");
                 string? downloadUrl = null;
                 string? assetName = null;
+                string osToken;
+                if (OperatingSystem.IsWindows()) osToken = "windows";
+                else if (OperatingSystem.IsLinux()) osToken = "linux";
+                else if (OperatingSystem.IsMacOS() || OperatingSystem.IsMacCatalyst()) osToken = "macos";
+                else
+                {
+                    _logger.LogWarning("Unsupported OS platform");
+                    return;
+                }
+                string? archToken = RuntimeInformation.ProcessArchitecture switch
+                {
+                    Architecture.X64 => "x86_64",
+                    Architecture.X86 when OperatingSystem.IsWindows() => "i686",
+                    Architecture.Arm64 when OperatingSystem.IsWindows() => "arm64",
+                    Architecture.Arm64 when OperatingSystem.IsLinux() || OperatingSystem.IsMacOS() || OperatingSystem.IsMacCatalyst() => "aarch64",
+                    _ => null
+                };
+                if (archToken is null)
+                {
+                    _logger.LogWarning("Unsupported architecture for {OS}", osToken);
+                    return;
+                }
+                var token = $"easytier-{osToken}-{archToken}";
                 foreach (var asset in assets.EnumerateArray())
                 {
                     var name = asset.GetProperty("name").GetString();
                     var url = asset.GetProperty("browser_download_url").GetString();
-                    if (name != null && url != null && name.Contains("windows", StringComparison.OrdinalIgnoreCase) && name.Contains("x86_64", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                    if (name != null && url != null && name.Contains(token, StringComparison.OrdinalIgnoreCase) &&
+                        (name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ||
+                         name.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase) ||
+                         name.EndsWith(".tgz", StringComparison.OrdinalIgnoreCase)))
                     {
                         downloadUrl = url;
                         assetName = name;
@@ -43,7 +71,7 @@ namespace YukariConnect.Services
                 }
                 if (downloadUrl == null)
                 {
-                    _logger.LogWarning("EasyTier release asset not found for windows x86_64 zip");
+                    _logger.LogWarning("EasyTier asset not found for {OS}-{ARCH}", osToken, archToken);
                     return;
                 }
                 var zipPath = Path.Combine(resourceDir, assetName!);
@@ -53,14 +81,34 @@ namespace YukariConnect.Services
                     await using var fs = new FileStream(zipPath, FileMode.Create, FileAccess.Write, FileShare.None);
                     await resp.Content.CopyToAsync(fs, cancellationToken);
                 }
-                using (var fs = new FileStream(zipPath, FileMode.Open, FileAccess.Read, FileShare.Read))
-                using (var archive = new ZipArchive(fs, ZipArchiveMode.Read))
+                if (assetName!.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
                 {
+                    using var fs = new FileStream(zipPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+                    using var archive = new ZipArchive(fs, ZipArchiveMode.Read);
                     foreach (var entry in archive.Entries)
                     {
                         if (string.IsNullOrEmpty(entry.Name)) continue;
                         var destPath = Path.Combine(resourceDir, entry.Name);
                         entry.ExtractToFile(destPath, true);
+                    }
+                }
+                else if (assetName.EndsWith(".tar.gz", StringComparison.OrdinalIgnoreCase) || assetName.EndsWith(".tgz", StringComparison.OrdinalIgnoreCase))
+                {
+                    using var fs = new FileStream(zipPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+                    using var gz = new GZipStream(fs, CompressionMode.Decompress);
+                    using var tar = new TarReader(gz);
+                    TarEntry? entry;
+                    while ((entry = tar.GetNextEntry()) != null)
+                    {
+                        if (entry.EntryType == TarEntryType.Directory) continue;
+                        var fileName = Path.GetFileName(entry.Name);
+                        if (string.IsNullOrEmpty(fileName)) continue;
+                        var destPath = Path.Combine(resourceDir, fileName);
+                        await using var outStream = new FileStream(destPath, FileMode.Create, FileAccess.Write, FileShare.None);
+                        if (entry.DataStream != null)
+                        {
+                            await entry.DataStream.CopyToAsync(outStream, cancellationToken);
+                        }
                     }
                 }
                 if (File.Exists(coreExe))
