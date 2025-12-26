@@ -34,11 +34,19 @@ namespace YukariConnect
             // Register shutdown handler to clean up RoomController
             app.Lifetime.ApplicationStopping.Register(() =>
             {
+                Console.WriteLine("[Shutdown] Cleaning up RoomController...");
                 var roomController = app.Services.GetService<RoomController>();
                 if (roomController != null)
                 {
+                    Console.WriteLine("[Shutdown] Disposing RoomController...");
                     roomController.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                    Console.WriteLine("[Shutdown] RoomController disposed");
                 }
+            });
+
+            app.Lifetime.ApplicationStopped.Register(() =>
+            {
+                Console.WriteLine("[Shutdown] Application stopped");
             });
 
             if (app.Environment.IsDevelopment())
@@ -83,7 +91,10 @@ namespace YukariConnect
     [JsonSerializable(typeof(YukariConnect.Endpoints.RoomEndpoint.StartGuestRequest))]
     [JsonSerializable(typeof(YukariConnect.Endpoints.RoomEndpoint.MessageResponse))]
     [JsonSerializable(typeof(YukariConnect.Endpoints.RoomEndpoint.ErrorResponse))]
-    internal partial class AppJsonSerializerContext : JsonSerializerContext
+    [JsonSerializable(typeof(YukariConnect.Scaffolding.Models.PlayerPingRequest))]
+    [JsonSerializable(typeof(YukariConnect.Scaffolding.Models.ScaffoldingProfile))]
+    [JsonSerializable(typeof(List<YukariConnect.Scaffolding.Models.ScaffoldingProfile>))]
+    public partial class AppJsonSerializerContext : JsonSerializerContext
     {
     }
 }

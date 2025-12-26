@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http.HttpResults;
+using System.Text.Json;
 using YukariConnect.Services;
 
 namespace YukariConnect.Endpoints;
@@ -24,7 +25,7 @@ public static class EasyTierEndpoint
         if (result == null)
             return TypedResults.NotFound(new { error = "EasyTier not available" });
 
-        return TypedResults.Ok(result);
+        return Results.Content(result.RootElement.GetRawText(), "application/json");
     }
 
     static async Task<IResult> GetPeers(EasyTierCliService cli, CancellationToken ct)
@@ -33,7 +34,7 @@ public static class EasyTierEndpoint
         if (result == null)
             return TypedResults.NotFound(new { error = "EasyTier not available" });
 
-        return TypedResults.Ok(result);
+        return Results.Content(result.RootElement.GetRawText(), "application/json");
     }
 
     static async Task<IResult> GetRoutes(EasyTierCliService cli, CancellationToken ct)
@@ -42,7 +43,7 @@ public static class EasyTierEndpoint
         if (result == null)
             return TypedResults.NotFound(new { error = "EasyTier not available" });
 
-        return TypedResults.Ok(result);
+        return Results.Content(result.RootElement.GetRawText(), "application/json");
     }
 
     static async Task<IResult> GetStats(EasyTierCliService cli, CancellationToken ct)
@@ -51,7 +52,7 @@ public static class EasyTierEndpoint
         if (result == null)
             return TypedResults.NotFound(new { error = "EasyTier not available" });
 
-        return TypedResults.Ok(result);
+        return Results.Content(result.RootElement.GetRawText(), "application/json");
     }
 
     static IResult GetPublicServers(PublicServersService publicServers)

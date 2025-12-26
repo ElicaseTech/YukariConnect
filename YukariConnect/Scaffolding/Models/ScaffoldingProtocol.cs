@@ -1,3 +1,6 @@
+using System.Text.Json.Serialization;
+using System.Text.Json;
+
 namespace YukariConnect.Scaffolding.Models;
 
 /// <summary>
@@ -14,17 +17,46 @@ public static class ScaffoldingFingerprint
 }
 
 /// <summary>
-/// Player profile information.
+/// Player profile information (for internal use).
 /// </summary>
 public sealed class ScaffoldingProfile
 {
-    public required string Name { get; init; }
-    public required string MachineId { get; init; }  // 32 hex chars (16 bytes)
-    public required string Vendor { get; init; }
-    public required ScaffoldingProfileKind Kind { get; init; }
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("machine_id")]
+    public string MachineId { get; set; } = string.Empty;  // 32 hex chars (16 bytes)
+
+    [JsonPropertyName("vendor")]
+    public string Vendor { get; set; } = string.Empty;
+
+    [JsonPropertyName("kind")]
+    public ScaffoldingProfileKind Kind { get; set; } = ScaffoldingProfileKind.Guest;
 
     // Optional: EasyTier ID for extended functionality
-    public string? EasyTierId { get; init; }
+    [JsonPropertyName("easytier_id")]
+    public string? EasyTierId { get; set; }
+}
+
+/// <summary>
+/// Player profile DTO for JSON serialization (kind as string).
+/// </summary>
+public sealed class ScaffoldingProfileDto
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("machine_id")]
+    public string MachineId { get; set; } = string.Empty;
+
+    [JsonPropertyName("vendor")]
+    public string Vendor { get; set; } = string.Empty;
+
+    [JsonPropertyName("kind")]
+    public string Kind { get; set; } = "GUEST";
+
+    [JsonPropertyName("easytier_id")]
+    public string? EasyTierId { get; set; }
 }
 
 /// <summary>
@@ -88,9 +120,16 @@ public sealed class ScaffoldingResponse
 /// </summary>
 public sealed class PlayerPingRequest
 {
-    public required string Name { get; set; }
-    public required string MachineId { get; set; }
-    public required string Vendor { get; set; }
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
+    [JsonPropertyName("machine_id")]
+    public string MachineId { get; set; } = string.Empty;
+
+    [JsonPropertyName("vendor")]
+    public string Vendor { get; set; } = string.Empty;
+
+    [JsonPropertyName("easytier_id")]
     public string? EasyTierId { get; set; }
 }
 
@@ -102,4 +141,15 @@ public sealed class CenterInfo
     public required System.Net.IPAddress Ip { get; init; }
     public required ushort Port { get; init; }
     public required string Hostname { get; init; }
+}
+
+/// <summary>
+/// JSON source generator context for Scaffolding types (AOT-compatible).
+/// </summary>
+[JsonSerializable(typeof(PlayerPingRequest))]
+[JsonSerializable(typeof(ScaffoldingProfile))]
+[JsonSerializable(typeof(ScaffoldingProfileDto))]
+[JsonSerializable(typeof(List<ScaffoldingProfileDto>))]
+public partial class ScaffoldingJsonContext : JsonSerializerContext
+{
 }

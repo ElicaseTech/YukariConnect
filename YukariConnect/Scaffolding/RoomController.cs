@@ -273,18 +273,46 @@ public sealed partial class RoomController : IAsyncDisposable
     {
         if (_runtime == null) return;
 
+        _logger.LogInformation("Cleaning up RoomController resources...");
+
         try { await (_runtime.ScaffoldingClient?.DisposeAsync() ?? ValueTask.CompletedTask); } catch { }
-        try { (_runtime.ScaffoldingServer as IAsyncDisposable)?.DisposeAsync(); } catch { }
+
+        // Properly await ScaffoldingServer disposal
+        if (_runtime.ScaffoldingServer != null)
+        {
+            _logger.LogInformation("Stopping ScaffoldingServer...");
+            try
+            {
+                await _runtime.ScaffoldingServer.StopAsync();
+                _logger.LogInformation("ScaffoldingServer stopped");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to stop ScaffoldingServer");
+            }
+        }
+
         try { await (_runtime.FakeServer?.DisposeAsync() ?? ValueTask.CompletedTask); } catch { }
 
         if (_runtime.EasyTierProcess != null && !_runtime.EasyTierProcess.HasExited)
         {
-            try { _runtime.EasyTierProcess.Kill(entireProcessTree: true); } catch { }
+            _logger.LogInformation("Killing EasyTier process (PID: {Pid})...", _runtime.EasyTierProcess.Id);
+            try
+            {
+                _runtime.EasyTierProcess.Kill(entireProcessTree: true);
+                _logger.LogInformation("EasyTier process killed successfully");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to kill EasyTier process (PID: {Pid})", _runtime.EasyTierProcess.Id);
+            }
         }
 
         _runtime.ScaffoldingClient = null;
         _runtime.ScaffoldingServer = null;
         _runtime.FakeServer = null;
         _runtime.EasyTierProcess = null;
+
+        _logger.LogInformation("RoomController cleanup completed");
     }
 }

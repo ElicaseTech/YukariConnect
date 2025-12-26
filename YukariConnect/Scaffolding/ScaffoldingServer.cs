@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using YukariConnect.Scaffolding.Models;
+using ScaffoldingJsonContext = YukariConnect.Scaffolding.Models.ScaffoldingJsonContext;
 
 namespace YukariConnect.Scaffolding;
 
@@ -62,9 +63,10 @@ public sealed partial class ScaffoldingServer : IAsyncDisposable
         {
             socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
             socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-            socket.Bind(new IPEndPoint(IPAddress.Any, _port));
+            var endPoint = new IPEndPoint(IPAddress.Any, _port);
+            socket.Bind(endPoint);
             socket.Listen(100);
-            _logger.LogInformation("Scaffolding server bound to port {Port}", _port);
+            _logger.LogInformation("Scaffolding server bound to {EndPoint}", endPoint);
         }
         catch (SocketException) when (_port != 0)
         {
@@ -99,6 +101,8 @@ public sealed partial class ScaffoldingServer : IAsyncDisposable
     {
         if (_cts == null) return;
 
+        _logger.LogInformation("Stopping ScaffoldingServer...");
+
         _cts.Cancel();
 
         // Close the socket to stop accepting new connections
@@ -107,10 +111,17 @@ public sealed partial class ScaffoldingServer : IAsyncDisposable
 
         try { await (_acceptLoop ?? Task.CompletedTask); } catch { }
 
-        foreach (var handler in _clientHandlers)
+        // Wait for all client handlers to complete with timeout
+        var timeoutTask = Task.Delay(TimeSpan.FromSeconds(5));
+        var handlersTask = Task.WhenAll(_clientHandlers);
+
+        var completedTask = await Task.WhenAny(handlersTask, timeoutTask);
+
+        if (completedTask == timeoutTask)
         {
-            try { await handler; } catch { }
+            _logger.LogWarning("Client handlers did not complete within 5s, forcing shutdown");
         }
+
         _clientHandlers.Clear();
 
         _cts.Dispose();
@@ -128,6 +139,10 @@ public sealed partial class ScaffoldingServer : IAsyncDisposable
             try
             {
                 var clientSocket = await _listenerSocket!.AcceptAsync(ct);
+
+                // Disable Nagle's algorithm for immediate responses
+                clientSocket.NoDelay = true;
+
                 var client = new TcpClient { Client = clientSocket };
                 var handler = Task.Run(() => HandleClientAsync(client, ct), ct);
                 _clientHandlers.Add(handler);
@@ -150,7 +165,7 @@ public sealed partial class ScaffoldingServer : IAsyncDisposable
     private async Task HandleClientAsync(TcpClient client, CancellationToken ct)
     {
         var endPoint = (IPEndPoint)client.Client.RemoteEndPoint!;
-        _logger.LogDebug("Client connected from {EndPoint}", endPoint);
+        _logger.LogInformation("[TCP] Client connected from {EndPoint}", endPoint);
 
         try
         {
@@ -164,10 +179,14 @@ public sealed partial class ScaffoldingServer : IAsyncDisposable
                 var request = await ReadRequestAsync(stream, ct);
                 if (request == null) break;
 
-                _logger.LogDebug("Received request: {Kind}", request.Kind);
+                _logger.LogInformation("[TCP] Received request from {EndPoint}: {Kind}, BodyLength={BodyLength}",
+                    endPoint, request.Kind, request.Body.Length);
 
                 // Handle request
                 var response = await HandleRequestAsync(request, endPoint);
+
+                _logger.LogInformation("[TCP] Sending response to {EndPoint}: Status={Status}, DataLength={DataLength}",
+                    endPoint, response.Status, response.Data.Length);
 
                 // Write response
                 await WriteResponseAsync(stream, response, ct);
@@ -175,11 +194,11 @@ public sealed partial class ScaffoldingServer : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Client handler error");
+            _logger.LogInformation(ex, "[TCP] Client handler error from {EndPoint}", endPoint);
         }
         finally
         {
-            _logger.LogDebug("Client disconnected: {EndPoint}", endPoint);
+            _logger.LogInformation("[TCP] Client disconnected: {EndPoint}", endPoint);
         }
     }
 
@@ -298,13 +317,25 @@ public sealed partial class ScaffoldingServer : IAsyncDisposable
     /// </summary>
     private async Task<Models.ScaffoldingResponse> HandlePlayerPingAsync(Models.ScaffoldingRequest request)
     {
+        // Log raw JSON for debugging
+        string jsonRequest = Encoding.UTF8.GetString(request.Body);
+        _logger.LogInformation("[player_ping] Raw JSON ({Length} bytes): {Json}", request.Body.Length, jsonRequest);
+
+        // Log hex dump for binary debugging
+        string hexDump = BitConverter.ToString(request.Body.Take(Math.Min(64, request.Body.Length)).ToArray()).Replace("-", " ");
+        if (request.Body.Length > 64)
+            hexDump += "...";
+        _logger.LogInformation("[player_ping] Raw hex (first 64 bytes): {Hex}", hexDump);
+
         PlayerPingRequest? ping;
         try
         {
-            ping = JsonSerializer.Deserialize<PlayerPingRequest>(request.Body);
+            // Use source generator for AOT compatibility
+            ping = JsonSerializer.Deserialize(request.Body, ScaffoldingJsonContext.Default.PlayerPingRequest);
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogError(ex, "[player_ping] JSON deserialization failed");
             return new Models.ScaffoldingResponse
             {
                 Status = 1,
@@ -314,12 +345,16 @@ public sealed partial class ScaffoldingServer : IAsyncDisposable
 
         if (ping == null || string.IsNullOrEmpty(ping.MachineId))
         {
+            _logger.LogWarning("[player_ping] Missing machine_id. ping={Ping}", ping != null);
             return new Models.ScaffoldingResponse
             {
                 Status = 1,
                 Data = Encoding.UTF8.GetBytes("Missing machine_id")
             };
         }
+
+        _logger.LogInformation("[player_ping] Parsed: Name={Name}, MachineId={MachineId}, Vendor={Vendor}",
+            ping.Name, ping.MachineId, ping.Vendor);
 
         lock (_playersLock)
         {
@@ -369,20 +404,21 @@ public sealed partial class ScaffoldingServer : IAsyncDisposable
     /// </summary>
     private Models.ScaffoldingResponse HandlePlayerProfilesList()
     {
-        List<ScaffoldingProfile> profiles;
+        List<ScaffoldingProfileDto> profiles;
 
         lock (_playersLock)
         {
-            profiles = _players.Values.Select(e => new ScaffoldingProfile
+            profiles = _players.Values.Select(e => new ScaffoldingProfileDto
             {
                 Name = e.Name,
                 MachineId = e.MachineId,
                 Vendor = e.Vendor,
-                Kind = e.Kind
+                Kind = e.Kind.Value  // Serialize kind as string value
             }).ToList();
         }
 
-        var json = JsonSerializer.SerializeToUtf8Bytes(profiles);
+        // Use source generator for AOT compatibility
+        var json = JsonSerializer.SerializeToUtf8Bytes(profiles, ScaffoldingJsonContext.Default.ListScaffoldingProfileDto);
         return new Models.ScaffoldingResponse
         {
             Status = 0,

@@ -63,13 +63,23 @@ public sealed partial class RoomController
             return;
         }
 
-        var defaultServer = publicServers.GetDefaultServer() ?? "udp://public-server.easytier.top:11010";
+        // Use TCP public servers for Terracotta compatibility
+        // Terracotta uses these specific TCP servers
+        var tcpPublicServers = new[]
+        {
+            "tcp://public.easytier.top:11010",
+            "tcp://public2.easytier.cn:54321"
+        };
 
         var args = new List<string>
         {
             // Core options
             "--no-tun",
             "--dhcp",
+            "--multi-thread",
+            "--latency-first",
+            "--compression", "zstd",
+            "--enable-kcp-proxy",
             // Network
             "--network-name", _runtime.NetworkName,
             "--network-secret", _runtime.NetworkSecret,
@@ -79,8 +89,9 @@ public sealed partial class RoomController
             // Allow all ports
             "--tcp-whitelist", "0",
             "--udp-whitelist", "0",
-            // Public servers (P2P is enabled by default)
-            "--peers", defaultServer
+            // Public servers (TCP for Terracotta compatibility)
+            "--peers", tcpPublicServers[0],
+            "--peers", tcpPublicServers[1]
         };
 
         var psi = new ProcessStartInfo
