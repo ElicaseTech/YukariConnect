@@ -282,6 +282,9 @@ public sealed partial class RoomController
             await client.ConnectAsync(ct);
             _logger.LogInformation("Connected to scaffolding server");
 
+            // Reset retry counter on successful connection
+            _scaffoldingConnectRetryCount = 0;
+
             // Verify fingerprint
             _logger.LogInformation("Verifying fingerprint with c:ping...");
             if (!await client.PingAsync(ct))
@@ -313,10 +316,33 @@ public sealed partial class RoomController
         catch (Exception ex)
         {
             _logger.LogError(ex, "Scaffolding connection failed");
-            _lastError = $"Connection failed: {ex.Message}";
-            await client.DisposeAsync();
-            _state = RoomStateKind.Error;
-            EmitStatus();
+
+            // Increment retry counter
+            _scaffoldingConnectRetryCount++;
+
+            const int maxRetries = 50;
+            if (_scaffoldingConnectRetryCount < maxRetries)
+            {
+                _logger.LogWarning("Scaffolding connection attempt {Attempt}/{Max}, will retry in 2s...",
+                    _scaffoldingConnectRetryCount, maxRetries);
+                _lastError = $"Connection failed (attempt {_scaffoldingConnectRetryCount}/{maxRetries})";
+                await client.DisposeAsync();
+
+                // Stay in Guest_ConnectingScaffolding state to retry
+                // Add delay before next attempt
+                await Task.Delay(TimeSpan.FromSeconds(2), ct);
+
+                // Emit status to update UI with retry count
+                EmitStatus();
+            }
+            else
+            {
+                _logger.LogError("Scaffolding connection failed after {Max} attempts", maxRetries);
+                _lastError = $"Connection failed after {maxRetries} attempts: {ex.Message}";
+                await client.DisposeAsync();
+                _state = RoomStateKind.Error;
+                EmitStatus();
+            }
         }
     }
 

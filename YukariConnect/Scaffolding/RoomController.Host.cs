@@ -330,7 +330,6 @@ public sealed partial class RoomController
         EmitStatus();
     }
 
-    private int _mcFailureCount = 0;
     private const int MC_MAX_FAILURES = 3;
 
     private async Task StepHost_RunningAsync(CancellationToken ct)

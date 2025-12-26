@@ -103,6 +103,11 @@ public sealed class RoomRuntime
 
     // Fake MC server for broadcasting to virtual network
     public MinecraftFakeServer? FakeServer { get; set; }
+
+    /// <summary>
+    /// Returns true if this runtime is for HostCenter role.
+    /// </summary>
+    public bool IsHost => Role == RoomRole.HostCenter;
 }
 
 /// <summary>

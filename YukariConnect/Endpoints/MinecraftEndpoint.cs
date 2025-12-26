@@ -27,6 +27,8 @@ namespace YukariConnect.Endpoints
             DateTimeOffset Timestamp
         );
 
+        public record ErrorResponse(string Message);
+
         public static void Map(WebApplication app)
         {
             var mcApi = app.MapGroup("/minecraft");
@@ -72,13 +74,13 @@ namespace YukariConnect.Endpoints
         {
             if (!IPAddress.TryParse(ip, out var ipAddress))
             {
-                return TypedResults.BadRequest(new ErrorResponse("Invalid IP address format"));
+                return TypedResults.BadRequest();
             }
 
             var server = state.GetServer(ipAddress);
             if (server == null)
             {
-                return TypedResults.NotFound(new ErrorResponse($"Server at {ip} not found or offline"));
+                return TypedResults.NotFound();
             }
 
             return TypedResults.Ok(new MinecraftServerDto(
@@ -118,7 +120,5 @@ namespace YukariConnect.Endpoints
                 DateTimeOffset.UtcNow
             ));
         }
-
-        record ErrorResponse(string Message);
     }
 }

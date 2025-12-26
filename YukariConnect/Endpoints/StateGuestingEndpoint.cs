@@ -1,20 +1,37 @@
-using Microsoft.AspNetCore.Http.HttpResults;
+using YukariConnect.Scaffolding;
 
 namespace YukariConnect.Endpoints
 {
     public static class StateGuestingEndpoint
     {
-        public record StateGuestingResponse(string State, string Room, string Player);
         public static void Map(WebApplication app)
         {
-            app.MapGet("/state/guesting", Results<Ok<StateGuestingResponse>, BadRequest> (string? room, string? player) =>
+            app.MapGet("/state/guesting", async (string? room, string? player, RoomController roomController) =>
             {
-                if (string.IsNullOrWhiteSpace(room) || string.IsNullOrWhiteSpace(player))
+                // room parameter is REQUIRED in Terracotta - must be provided
+                if (string.IsNullOrWhiteSpace(room))
                 {
-                    return TypedResults.BadRequest();
+                    return Results.BadRequest();
                 }
-                var payload = new StateGuestingResponse("guesting", room!, player!);
-                return TypedResults.Ok(payload);
+
+                // player parameter is optional
+                var playerName = string.IsNullOrWhiteSpace(player) ? "Guest" : player!;
+
+                // Start guest mode
+                try
+                {
+                    await roomController.StartGuestAsync(
+                        roomCode: room!,
+                        playerName: playerName,
+                        launcherCustomString: null
+                    );
+
+                    return Results.Ok();
+                }
+                catch (ArgumentException)
+                {
+                    return Results.BadRequest();
+                }
             });
         }
     }

@@ -18,6 +18,11 @@ namespace YukariConnect
             });
 
             builder.Services.AddOpenApi();
+            builder.Services.AddEndpointsApiExplorer();
+
+            // TODO: Swagger with AOT requires additional configuration
+            // For now, we rely on the built-in OpenAPI JSON endpoint
+
             builder.Services.AddHostedService<EasyTierResourceInitializer>();
             builder.Services.AddSingleton<EasyTierCliService>();
             builder.Services.AddSingleton<PublicServersService>();
@@ -77,20 +82,18 @@ namespace YukariConnect
 
     [JsonSerializable(typeof(YukariConnect.Endpoints.MetaEndpoint.MetaResponse))]
     [JsonSerializable(typeof(YukariConnect.Endpoints.StateEndpoint.StateResponse))]
-    [JsonSerializable(typeof(YukariConnect.Endpoints.StateIdeEndpoint.StateIdeResponse))]
-    [JsonSerializable(typeof(YukariConnect.Endpoints.StateScanningEndpoint.StateScanningResponse))]
-    [JsonSerializable(typeof(YukariConnect.Endpoints.StateGuestingEndpoint.StateGuestingResponse))]
-    [JsonSerializable(typeof(YukariConnect.Endpoints.LogEndpoint.LogResponse))]
     [JsonSerializable(typeof(YukariConnect.Endpoints.PanicEndpoint.PanicResponse))]
+    [JsonSerializable(typeof(YukariConnect.Endpoints.EasyTierEndpoint.PublicServersResponse))]
     [JsonSerializable(typeof(YukariConnect.Endpoints.MinecraftEndpoint.MinecraftServerListResponse))]
     [JsonSerializable(typeof(YukariConnect.Endpoints.MinecraftEndpoint.MinecraftServerDto))]
     [JsonSerializable(typeof(YukariConnect.Endpoints.MinecraftEndpoint.MinecraftStatusResponse))]
+    [JsonSerializable(typeof(YukariConnect.Endpoints.MinecraftEndpoint.ErrorResponse))]
     [JsonSerializable(typeof(YukariConnect.Endpoints.RoomEndpoint.RoomStatusResponse))]
     [JsonSerializable(typeof(YukariConnect.Endpoints.RoomEndpoint.PlayerInfoDto))]
     [JsonSerializable(typeof(YukariConnect.Endpoints.RoomEndpoint.StartHostRequest))]
     [JsonSerializable(typeof(YukariConnect.Endpoints.RoomEndpoint.StartGuestRequest))]
     [JsonSerializable(typeof(YukariConnect.Endpoints.RoomEndpoint.MessageResponse))]
-    [JsonSerializable(typeof(YukariConnect.Endpoints.RoomEndpoint.ErrorResponse))]
+    [JsonSerializable(typeof(YukariConnect.Endpoints.RoomEndpoint.RoomErrorResponse))]
     [JsonSerializable(typeof(YukariConnect.Scaffolding.Models.PlayerPingRequest))]
     [JsonSerializable(typeof(YukariConnect.Scaffolding.Models.ScaffoldingProfile))]
     [JsonSerializable(typeof(List<YukariConnect.Scaffolding.Models.ScaffoldingProfile>))]

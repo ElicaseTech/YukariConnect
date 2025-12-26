@@ -1,20 +1,25 @@
-using Microsoft.AspNetCore.Http.HttpResults;
+using YukariConnect.Scaffolding;
 
 namespace YukariConnect.Endpoints
 {
     public static class StateScanningEndpoint
     {
-        public record StateScanningResponse(string State, string Room, string Player);
         public static void Map(WebApplication app)
         {
-            app.MapGet("/state/scanning", Results<Ok<StateScanningResponse>, BadRequest> (string? room, string? player) =>
+            app.MapGet("/state/scanning", async (string? room, string? player, RoomController roomController) =>
             {
-                if (string.IsNullOrWhiteSpace(room) || string.IsNullOrWhiteSpace(player))
-                {
-                    return TypedResults.BadRequest();
-                }
-                var payload = new StateScanningResponse("scanning", room!, player!);
-                return TypedResults.Ok(payload);
+                // room parameter is optional in Terracotta - if not provided, generate a new room code
+                // player parameter is optional
+                var playerName = string.IsNullOrWhiteSpace(player) ? "Host" : player!;
+
+                // Start host mode
+                await roomController.StartHostAsync(
+                    scaffoldingPort: 13448,
+                    playerName: playerName,
+                    launcherCustomString: null
+                );
+
+                return Results.Ok();
             });
         }
     }

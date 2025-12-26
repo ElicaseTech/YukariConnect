@@ -1,5 +1,3 @@
-using Microsoft.AspNetCore.Http.HttpResults;
-using System.Text.Json;
 using YukariConnect.Services;
 
 namespace YukariConnect.Endpoints;
@@ -7,6 +5,7 @@ namespace YukariConnect.Endpoints;
 public static class EasyTierEndpoint
 {
     public record PublicServersResponse(string[] Servers);
+    public record ErrorResponse(string Error);
 
     public static void Map(WebApplication app)
     {
@@ -23,7 +22,7 @@ public static class EasyTierEndpoint
     {
         var result = await cli.NodeAsync(ct);
         if (result == null)
-            return TypedResults.NotFound(new { error = "EasyTier not available" });
+            return Results.NotFound();
 
         return Results.Content(result.RootElement.GetRawText(), "application/json");
     }
@@ -32,7 +31,7 @@ public static class EasyTierEndpoint
     {
         var result = await cli.PeersAsync(ct);
         if (result == null)
-            return TypedResults.NotFound(new { error = "EasyTier not available" });
+            return Results.NotFound();
 
         return Results.Content(result.RootElement.GetRawText(), "application/json");
     }
@@ -41,7 +40,7 @@ public static class EasyTierEndpoint
     {
         var result = await cli.RoutesAsync(ct);
         if (result == null)
-            return TypedResults.NotFound(new { error = "EasyTier not available" });
+            return Results.NotFound();
 
         return Results.Content(result.RootElement.GetRawText(), "application/json");
     }
@@ -50,7 +49,7 @@ public static class EasyTierEndpoint
     {
         var result = await cli.StatsAsync(ct);
         if (result == null)
-            return TypedResults.NotFound(new { error = "EasyTier not available" });
+            return Results.NotFound();
 
         return Results.Content(result.RootElement.GetRawText(), "application/json");
     }
@@ -58,6 +57,6 @@ public static class EasyTierEndpoint
     static IResult GetPublicServers(PublicServersService publicServers)
     {
         var servers = publicServers.GetServers();
-        return TypedResults.Ok(new PublicServersResponse(servers));
+        return Results.Ok(new PublicServersResponse(servers));
     }
 }

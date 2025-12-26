@@ -36,7 +36,7 @@ public static class RoomEndpoint
     );
 
     public record MessageResponse([property: JsonPropertyName("message")] string Message);
-    public record ErrorResponse([property: JsonPropertyName("error")] string Error);
+    public record RoomErrorResponse([property: JsonPropertyName("error")] string Error);
 
     public static void Map(WebApplication app)
     {
@@ -81,7 +81,7 @@ public static class RoomEndpoint
         }
         catch (Exception ex)
         {
-            return TypedResults.BadRequest(new ErrorResponse(ex.Message));
+            return TypedResults.BadRequest(new RoomErrorResponse(ex.Message));
         }
     }
 
@@ -99,7 +99,7 @@ public static class RoomEndpoint
         }
         catch (Exception ex)
         {
-            return TypedResults.BadRequest(new ErrorResponse(ex.Message));
+            return TypedResults.BadRequest(new RoomErrorResponse(ex.Message));
         }
     }
 
@@ -112,7 +112,7 @@ public static class RoomEndpoint
         }
         catch (Exception ex)
         {
-            return TypedResults.BadRequest(new ErrorResponse(ex.Message));
+            return TypedResults.BadRequest(new RoomErrorResponse(ex.Message));
         }
     }
 }

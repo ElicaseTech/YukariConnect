@@ -29,6 +29,10 @@ public sealed partial class RoomController : IAsyncDisposable
     private CancellationTokenSource? _cts;
     private Task? _loop;
 
+    // Retry counters (shared across partial classes)
+    internal int _scaffoldingConnectRetryCount = 0;
+    internal int _mcFailureCount = 0;
+
     // Events
     public event Action<RoomStatus>? OnStateChanged;
 
@@ -210,6 +214,53 @@ public sealed partial class RoomController : IAsyncDisposable
         _lastError = null;
 
         EmitStatus();
+    }
+
+    /// <summary>
+    /// Retry from Error state.
+    /// Resets retry counters and transitions back to the appropriate starting state.
+    /// </summary>
+    public async Task RetryAsync()
+    {
+        if (_state != RoomStateKind.Error)
+        {
+            _logger.LogWarning("RetryAsync called but not in Error state (current: {State})", _state);
+            return;
+        }
+
+        _logger.LogInformation("Retrying from Error state...");
+
+        // Reset retry counters
+        _scaffoldingConnectRetryCount = 0;
+        _mcFailureCount = 0;
+
+        // Determine which state to retry from
+        if (_runtime != null)
+        {
+            if (_runtime.IsHost)
+            {
+                // For host, retry from Host_Running state
+                // The state machine will handle reconnection
+                _logger.LogInformation("Retrying as Host, transitioning to Host_Running");
+                _state = RoomStateKind.Host_Running;
+                _lastError = null;
+                EmitStatus();
+            }
+            else
+            {
+                // For guest, retry from Guest_ConnectingScaffolding state
+                _logger.LogInformation("Retrying as Guest, transitioning to Guest_ConnectingScaffolding");
+                _state = RoomStateKind.Guest_ConnectingScaffolding;
+                _lastError = null;
+                EmitStatus();
+            }
+        }
+        else
+        {
+            _logger.LogWarning("RetryAsync: _runtime is null, cannot determine role");
+        }
+
+        await Task.CompletedTask;
     }
 
     public async ValueTask DisposeAsync() => await StopAsync();

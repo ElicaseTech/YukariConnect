@@ -1,14 +1,17 @@
+using YukariConnect.Scaffolding;
+
 namespace YukariConnect.Endpoints
 {
     public static class StateIdeEndpoint
     {
-        public record StateIdeResponse(string Ide);
         public static void Map(WebApplication app)
         {
-            app.MapGet("/state/ide", () =>
+            app.MapGet("/state/ide", async (RoomController roomController) =>
             {
-                var payload = new StateIdeResponse("ready");
-                return TypedResults.Ok(payload);
+                // Reset to idle state (equivalent to Terracotta's set_waiting)
+                await roomController.StopAsync();
+
+                return Results.Ok();
             });
         }
     }
