@@ -79,9 +79,8 @@ public sealed partial class RoomController
             // Allow all ports
             "--tcp-whitelist", "0",
             "--udp-whitelist", "0",
-            // Public servers
-            "--peer", defaultServer,
-            "--p2p"
+            // Public servers (P2P is enabled by default)
+            "--peers", defaultServer
         };
 
         var psi = new ProcessStartInfo

@@ -10,11 +10,6 @@ public class PublicServersService
 {
     private readonly string _configPath;
     private readonly ILogger<PublicServersService> _logger;
-    private readonly JsonSerializerOptions _jsonOptions = new()
-    {
-        ReadCommentHandling = JsonCommentHandling.Skip,
-        AllowTrailingCommas = true
-    };
 
     private string[]? _cachedServers;
 
@@ -47,8 +42,31 @@ public class PublicServersService
         try
         {
             var json = File.ReadAllText(_configPath);
-            var servers = JsonSerializer.Deserialize<string[]>(json, _jsonOptions);
-            _cachedServers = servers ?? Array.Empty<string>();
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            if (root.ValueKind != JsonValueKind.Array)
+            {
+                _logger.LogWarning("Public servers config must be a JSON array");
+                _cachedServers = Array.Empty<string>();
+                return _cachedServers;
+            }
+
+            var servers = new string[root.GetArrayLength()];
+            for (int i = 0; i < servers.Length; i++)
+            {
+                var element = root[i];
+                if (element.ValueKind == JsonValueKind.String)
+                {
+                    servers[i] = element.GetString() ?? string.Empty;
+                }
+                else
+                {
+                    servers[i] = element.ToString() ?? string.Empty;
+                }
+            }
+
+            _cachedServers = servers;
             _logger.LogInformation("Loaded {Count} public servers", _cachedServers.Length);
             return _cachedServers;
         }

@@ -5,13 +5,35 @@ using YukariConnect.Scaffolding.Models;
 namespace YukariConnect.Scaffolding;
 
 /// <summary>
+/// Error codes for room code parsing.
+/// </summary>
+public enum RoomCodeParseError
+{
+    None = 0,
+    Empty,
+    BadPrefix,
+    BadLength,
+    BadDash,
+    BadPartCount,
+    BadPartLength,
+    BadChar,
+    BadChecksum,
+}
+
+/// <summary>
 /// Helper functions for Scaffolding protocol.
 /// </summary>
 public static class ScaffoldingHelpers
 {
+    /// <summary>
+    /// Build stamp for verifying correct assembly is loaded.
+    /// </summary>
+    public const string BuildStamp = "ScaffoldingHelpers 2025-12-27 checksum-le-base34";
+
     // Character set for room code (no I, O to avoid confusion)
-    // Maps to [0,32]: 0-9 (0-9), A-H (10-17), J-N (18-22), P-Z (23-32)
-    private const string CharSet = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ"; // 33 characters
+    // Maps to [0,33]: 0-9 (0-9), A-H (10-17), J-N (18-22), P-Z (23-33)
+    private const string CharSet = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ"; // 34 characters
+    private static readonly int CharSetSize = CharSet.Length; // 34
 
     /// <summary>
     /// Parse center hostname to extract port.
@@ -75,45 +97,84 @@ public static class ScaffoldingHelpers
     /// </summary>
     public static bool TryParseRoomCode(string roomCode, out string networkName, out string networkSecret)
     {
+        return TryParseRoomCode(roomCode, out networkName, out networkSecret, out _);
+    }
+
+    /// <summary>
+    /// Parse room code to network name and secret with detailed error reporting.
+    /// Room code format: "U/NNNN-NNNN-SSSS-SSSS"
+    /// Maps to network name: "scaffolding-mc-NNNN-NNNN"
+    /// Maps to network secret: "SSSS-SSSS"
+    /// </summary>
+    public static bool TryParseRoomCode(string roomCode, out string networkName, out string networkSecret, out RoomCodeParseError error)
+    {
         networkName = string.Empty;
         networkSecret = string.Empty;
+        error = RoomCodeParseError.None;
 
         if (string.IsNullOrWhiteSpace(roomCode))
+        {
+            error = RoomCodeParseError.Empty;
             return false;
+        }
 
-        // Format: "U/NNNN-NNNN-SSSS-SSSS"
-        if (!roomCode.StartsWith("U/"))
+        roomCode = roomCode.Trim();
+
+        if (!roomCode.StartsWith("U/", StringComparison.OrdinalIgnoreCase))
+        {
+            error = RoomCodeParseError.BadPrefix;
             return false;
+        }
 
         var code = roomCode.Substring(2); // Remove "U/" prefix
 
-        // Expected format: NNNN-NNNN-SSSS-SSSS (18 chars)
-        if (code.Length != 18)
+        // Expected format: NNNN-NNNN-SSSS-SSSS (19 chars: 4+1+4+1+4+1+4)
+        // Debug: Log actual length for troubleshooting
+        System.Diagnostics.Debug.WriteLine($"[DEBUG] roomCode length after Substring(2): {code.Length}, code: '{code}'");
+        if (code.Length != 19)
+        {
+            error = RoomCodeParseError.BadLength;
             return false;
+        }
 
         // Validate format: XXXX-XXXX-XXXX-XXXX
         if (code[4] != '-' || code[9] != '-' || code[14] != '-')
+        {
+            error = RoomCodeParseError.BadDash;
             return false;
+        }
 
         var parts = code.Split('-');
         if (parts.Length != 4)
+        {
+            error = RoomCodeParseError.BadPartCount;
             return false;
+        }
 
         // Validate each part
         foreach (var part in parts)
         {
             if (part.Length != 4)
+            {
+                error = RoomCodeParseError.BadPartLength;
                 return false;
+            }
             foreach (var c in part)
             {
                 if (CharToValue(c) < 0)
+                {
+                    error = RoomCodeParseError.BadChar;
                     return false;
+                }
             }
         }
 
         // Validate checksum: N and S values (little-endian) must be divisible by 7
         if (!ValidateChecksum(code))
+        {
+            error = RoomCodeParseError.BadChecksum;
             return false;
+        }
 
         // Network name: scaffolding-mc-NNNN-NNNN
         networkName = $"scaffolding-mc-{parts[0]}-{parts[1]}";
@@ -126,43 +187,39 @@ public static class ScaffoldingHelpers
 
     /// <summary>
     /// Generate room code in format U/NNNN-NNNN-SSSS-SSSS.
-    /// The checksum ensures the sum of mapped values is divisible by 7.
+    /// The checksum ensures the little-endian base-34 integer is divisible by 7.
     /// </summary>
     public static string GenerateRoomCode()
     {
         Span<byte> randomBytes = stackalloc byte[16];
-        RandomNumberGenerator.Fill(randomBytes);
+        Span<int> indices = stackalloc int[16];
 
-        // Convert random bytes to character indices (mod 33)
-        var indices = new int[16];
-        for (int i = 0; i < 16; i++)
+        while (true)
         {
-            indices[i] = randomBytes[i] % 33;
+            RandomNumberGenerator.Fill(randomBytes);
+
+            // Convert random bytes to character indices
+            for (int i = 0; i < 16; i++)
+            {
+                indices[i] = randomBytes[i] % CharSetSize;
+            }
+
+            // Build room code: NNNN-NNNN-SSSS-SSSS
+            var n1 = ValueToChars(indices[0], indices[1], indices[2], indices[3]);
+            var n2 = ValueToChars(indices[4], indices[5], indices[6], indices[7]);
+            var s1 = ValueToChars(indices[8], indices[9], indices[10], indices[11]);
+            var s2 = ValueToChars(indices[12], indices[13], indices[14], indices[15]);
+
+            var code = $"{n1}-{n2}-{s1}-{s2}";
+
+            // Validate checksum - retry if not valid
+            if (ValidateChecksum(code))
+                return $"U/{code}";
         }
-
-        // Calculate sum mod 7
-        int sum = 0;
-        for (int i = 0; i < 16; i++)
-        {
-            sum += indices[i];
-        }
-        int remainder = sum % 7;
-        int adjustment = (7 - remainder) % 7;
-
-        // Apply adjustment to last index to make sum divisible by 7
-        indices[15] = (indices[15] + adjustment) % 33;
-
-        // Build room code: NNNN-NNNN-SSSS-SSSS
-        var n1 = ValueToChars(indices[0], indices[1], indices[2], indices[3]);
-        var n2 = ValueToChars(indices[4], indices[5], indices[6], indices[7]);
-        var s1 = ValueToChars(indices[8], indices[9], indices[10], indices[11]);
-        var s2 = ValueToChars(indices[12], indices[13], indices[14], indices[15]);
-
-        return $"U/{n1}-{n2}-{s1}-{s2}";
     }
 
     /// <summary>
-    /// Validate checksum: map chars to [0,32], sum must be divisible by 7.
+    /// Validate checksum: map chars to [0,33], interpret as little-endian base-34 integer, must be divisible by 7.
     /// Format: NNNN-NNNN-SSSS-SSSS
     /// </summary>
     private static bool ValidateChecksum(string code)
@@ -173,33 +230,32 @@ public static class ScaffoldingHelpers
         if (chars.Length != 16)
             return false;
 
-        int sum = 0;
+        // Calculate little-endian base-34 integer mod 7
+        int baseMod = CharSetSize % 7; // 34 % 7 = 6
+        int pow = 1;   // (CharSetSize^i) % 7
+        int mod = 0;
+
         for (int i = 0; i < 16; i++)
         {
             int v = CharToValue(chars[i]);
             if (v < 0)
                 return false;
-            sum += v;
+
+            mod = (mod + (v % 7) * pow) % 7;
+            pow = (pow * baseMod) % 7;
         }
 
-        return sum % 7 == 0;
+        return mod == 0;
     }
 
     /// <summary>
-    /// Map character to its value [0-32].
+    /// Map character to its value [0-33].
     /// Returns -1 if invalid.
     /// </summary>
     private static int CharToValue(char c)
     {
-        if (c >= '0' && c <= '9')
-            return c - '0';
-        if (c >= 'A' && c <= 'H')
-            return 10 + (c - 'A');
-        if (c >= 'J' && c <= 'N')
-            return 18 + (c - 'J');
-        if (c >= 'P' && c <= 'Z')
-            return 23 + (c - 'P');
-        return -1;
+        int index = CharSet.IndexOf(c);
+        return index >= 0 ? index : -1;
     }
 
     /// <summary>

@@ -105,8 +105,17 @@ public sealed partial class RoomController : IAsyncDisposable
         var machineId = ScaffoldingHelpers.LoadOrCreateMachineId(_machineIdPath);
         var roomCode = ScaffoldingHelpers.GenerateRoomCode();
 
-        if (!ScaffoldingHelpers.TryParseRoomCode(roomCode, out var networkName, out var networkSecret))
-            throw new InvalidOperationException("Generated invalid room code");
+        _logger.LogInformation("Generated room code: {RoomCode}, stamp: {Stamp}",
+            roomCode, ScaffoldingHelpers.BuildStamp);
+
+        if (!ScaffoldingHelpers.TryParseRoomCode(roomCode, out var networkName, out var networkSecret, out var error))
+        {
+            _logger.LogError("Failed to parse generated room code: {RoomCode}, error: {Error}, stamp: {Stamp}",
+                roomCode, error, ScaffoldingHelpers.BuildStamp);
+            throw new InvalidOperationException($"Generated invalid room code: {error}");
+        }
+
+        _logger.LogInformation("Parsed network name: {Network}, secret: {Secret}", networkName, networkSecret);
 
         // Get ET version for vendor string
         var etService = _serviceProvider.GetRequiredService<EasyTierCliService>();

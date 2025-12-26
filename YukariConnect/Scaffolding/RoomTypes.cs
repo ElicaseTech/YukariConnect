@@ -83,7 +83,7 @@ public sealed class RoomRuntime
     public required string NetworkSecret { get; init; }
 
     // Scaffolding
-    public required ushort ScaffoldingPort { get; init; } = 13448;
+    public ushort ScaffoldingPort { get; set; } = 13448;
     public ushort? MinecraftPort { get; set; }
 
     // Center discovery (for guest)

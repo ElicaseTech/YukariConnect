@@ -17,7 +17,8 @@ public sealed partial class ScaffoldingServer : IAsyncDisposable
     private readonly TimeSpan _heartbeatTimeout;
     private readonly ILogger<ScaffoldingServer> _logger;
 
-    private TcpListener? _listener;
+    private readonly TcpListener? _listener;
+    private Socket? _listenerSocket;
     private CancellationTokenSource? _cts;
     private Task? _acceptLoop;
     private readonly List<Task> _clientHandlers = new();
@@ -48,20 +49,50 @@ public sealed partial class ScaffoldingServer : IAsyncDisposable
 
     /// <summary>
     /// Start the scaffolding server.
+    /// Returns the actual port bound.
     /// </summary>
-    public async Task StartAsync(CancellationToken ct = default)
+    public async Task<ushort> StartAsync(CancellationToken ct = default)
     {
-        _listener = new TcpListener(IPAddress.Any, _port);
-        _listener.Start();
+        // Try to bind to the specified port first (13448)
+        // If that fails, bind to a random port (port = 0)
+        Socket socket = null;
+        ushort actualPort = _port;
 
+        try
+        {
+            socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+            socket.Bind(new IPEndPoint(IPAddress.Any, _port));
+            socket.Listen(100);
+            _logger.LogInformation("Scaffolding server bound to port {Port}", _port);
+        }
+        catch (SocketException) when (_port != 0)
+        {
+            _logger.LogWarning("Port {Port} is occupied, trying random port...", _port);
+            socket?.Dispose();
+
+            // Try with random port
+            socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+            socket.Bind(new IPEndPoint(IPAddress.Any, 0)); // 0 = random available port
+            socket.Listen(100);
+
+            // Get actual port assigned
+            var endPoint = (IPEndPoint)socket.LocalEndPoint!;
+            actualPort = (ushort)endPoint.Port;
+            _logger.LogInformation("Scaffolding server bound to random port {Port}", actualPort);
+        }
+
+        _listenerSocket = socket;
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
         // Start heartbeat cleanup loop
-        Task.Run(() => HeartbeatCleanupLoopAsync(_cts.Token), _cts.Token);
+        _ = Task.Run(() => HeartbeatCleanupLoopAsync(_cts.Token), _cts.Token);
 
         _acceptLoop = AcceptLoopAsync(_cts.Token);
 
-        _logger.LogInformation("Scaffolding server started on port {Port}", _port);
+        _logger.LogInformation("Scaffolding server started on port {Port}", actualPort);
+        return actualPort;
     }
 
     public async Task StopAsync()
@@ -69,7 +100,10 @@ public sealed partial class ScaffoldingServer : IAsyncDisposable
         if (_cts == null) return;
 
         _cts.Cancel();
-        _listener?.Stop();
+
+        // Close the socket to stop accepting new connections
+        try { _listenerSocket?.Close(); } catch { }
+        try { _listenerSocket?.Dispose(); } catch { }
 
         try { await (_acceptLoop ?? Task.CompletedTask); } catch { }
 
@@ -93,7 +127,8 @@ public sealed partial class ScaffoldingServer : IAsyncDisposable
         {
             try
             {
-                var client = await _listener!.AcceptTcpClientAsync(ct);
+                var clientSocket = await _listenerSocket!.AcceptAsync(ct);
+                var client = new TcpClient { Client = clientSocket };
                 var handler = Task.Run(() => HandleClientAsync(client, ct), ct);
                 _clientHandlers.Add(handler);
 

@@ -32,6 +32,36 @@ public sealed partial class RoomController
         _logger.LogInformation("Host prepare: network={Network}, room={Room}",
             _runtime!.NetworkName, _runtime.RoomCode);
 
+        _state = RoomStateKind.Host_ScaffoldingStarting;
+        EmitStatus();
+    }
+
+    private async Task StepHost_ScaffoldingStartingAsync(CancellationToken ct)
+    {
+        if (_runtime!.ScaffoldingServer != null)
+        {
+            _state = RoomStateKind.Host_EasyTierStarting;
+            EmitStatus();
+            return;
+        }
+
+        _runtime.ScaffoldingServer = new ScaffoldingServer(
+            _runtime.ScaffoldingPort,
+            logger: _serviceProvider.GetRequiredService<ILogger<ScaffoldingServer>>());
+
+        // Start scaffolding server and get actual port
+        var actualPort = await _runtime.ScaffoldingServer.StartAsync(ct);
+
+        // Update runtime with actual port (may differ if 13448 was occupied)
+        _runtime.ScaffoldingPort = actualPort;
+
+        // Set host profile
+        _runtime.ScaffoldingServer.SetHostProfile(
+            _runtime.PlayerName,
+            _runtime.MachineId,
+            _runtime.Vendor);
+
+        _logger.LogInformation("Scaffolding server started on port {Port}", actualPort);
         _state = RoomStateKind.Host_EasyTierStarting;
         EmitStatus();
     }
@@ -88,9 +118,8 @@ public sealed partial class RoomController
             "--tcp-whitelist", _runtime.ScaffoldingPort.ToString(),
             "--tcp-whitelist", "25565",
             "--udp-whitelist", "25565",
-            // Public servers
-            "--peer", defaultServer,
-            "--p2p"
+            // Public servers (P2P is enabled by default)
+            "--peers", defaultServer
         };
 
         var psi = new ProcessStartInfo
@@ -149,7 +178,7 @@ public sealed partial class RoomController
             if (node != null)
             {
                 _logger.LogInformation("EasyTier is ready");
-                _state = RoomStateKind.Host_ScaffoldingStarting;
+                _state = RoomStateKind.Host_MinecraftDetecting;
                 EmitStatus();
                 return;
             }
@@ -157,32 +186,6 @@ public sealed partial class RoomController
 
         _lastError = "EasyTier startup timeout";
         _state = RoomStateKind.Error;
-        EmitStatus();
-    }
-
-    private async Task StepHost_ScaffoldingStartingAsync(CancellationToken ct)
-    {
-        if (_runtime!.ScaffoldingServer != null)
-        {
-            _state = RoomStateKind.Host_MinecraftDetecting;
-            EmitStatus();
-            return;
-        }
-
-        _runtime.ScaffoldingServer = new ScaffoldingServer(
-            _runtime.ScaffoldingPort,
-            logger: _serviceProvider.GetRequiredService<ILogger<ScaffoldingServer>>());
-
-        await _runtime.ScaffoldingServer.StartAsync(ct);
-
-        // Set host profile
-        _runtime.ScaffoldingServer.SetHostProfile(
-            _runtime.PlayerName,
-            _runtime.MachineId,
-            _runtime.Vendor);
-
-        _logger.LogInformation("Scaffolding server started on port {Port}", _runtime.ScaffoldingPort);
-        _state = RoomStateKind.Host_MinecraftDetecting;
         EmitStatus();
     }
 
