@@ -18,6 +18,7 @@ namespace YukariConnect
 
             builder.Services.AddOpenApi();
             builder.Services.AddHostedService<EasyTierResourceInitializer>();
+            builder.Services.AddSingleton<EasyTierCliService>();
 
             // Register Minecraft LAN services
             builder.Services.AddSingleton<MinecraftLanState>();
