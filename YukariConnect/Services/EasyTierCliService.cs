@@ -9,6 +9,7 @@ namespace YukariConnect.Services
         private readonly ILogger<EasyTierCliService> _logger;
         private readonly string _cliPath;
         private readonly string _rpcPortal;
+        private string? _cachedVersion;
 
         public EasyTierCliService(IHostEnvironment env, ILogger<EasyTierCliService> logger)
         {
@@ -18,6 +19,51 @@ namespace YukariConnect.Services
             var exeName = OperatingSystem.IsWindows() ? "easytier-cli.exe" : "easytier-cli";
             _cliPath = Path.Combine(resourceDir, exeName);
             _rpcPortal = "127.0.0.1:15888";
+        }
+
+        /// <summary>
+        /// Get EasyTier CLI version string.
+        /// </summary>
+        public async Task<string> GetVersionAsync(CancellationToken ct = default)
+        {
+            if (_cachedVersion != null)
+                return _cachedVersion;
+
+            if (!File.Exists(_cliPath))
+            {
+                return "unknown";
+            }
+
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = _cliPath,
+                    ArgumentList = { "--version" },
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using var proc = new Process { StartInfo = psi };
+                proc.Start();
+                var stdout = await proc.StandardOutput.ReadToEndAsync(ct);
+                await proc.WaitForExitAsync(ct);
+
+                if (!string.IsNullOrWhiteSpace(stdout))
+                {
+                    _cachedVersion = stdout.Trim();
+                    return _cachedVersion;
+                }
+            }
+            catch
+            {
+                // Ignore errors, return "unknown"
+            }
+
+            _cachedVersion = "unknown";
+            return _cachedVersion;
         }
 
         public async Task<JsonDocument?> NodeAsync(CancellationToken ct = default) =>

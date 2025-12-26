@@ -130,16 +130,14 @@ public sealed partial class ScaffoldingClient : IAsyncDisposable
     }
 
     /// <summary>
-    /// Verify server identity using c:ping fingerprint.
+    /// Verify server connectivity using c:ping.
+    /// Server should echo back the request body.
     /// </summary>
     public async Task<bool> PingAsync(CancellationToken ct = default)
     {
-        var response = await SendRequestAsync("c:ping", ScaffoldingFingerprint.Value, ct);
-
-        if (!response.IsSuccess || response.Data.Length != 16)
-            return false;
-
-        return response.Data.SequenceEqual(ScaffoldingFingerprint.Value);
+        // Send empty body, server should echo back
+        var response = await SendRequestAsync("c:ping", Array.Empty<byte>(), ct);
+        return response.IsSuccess;
     }
 
     /// <summary>

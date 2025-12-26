@@ -44,7 +44,7 @@ public sealed partial class MinecraftLanListener : IHostedService, IAsyncDisposa
     {
         _state = state ?? new MinecraftLanState();
         _pingService = pingService ?? new MinecraftPingService();
-        _pingInterval = pingInterval ?? TimeSpan.FromSeconds(10);
+        _pingInterval = pingInterval ?? TimeSpan.FromSeconds(5);
         _broadcastTimeout = broadcastTimeout ?? TimeSpan.FromSeconds(30);
         _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<MinecraftLanListener>.Instance;
     }

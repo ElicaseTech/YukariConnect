@@ -207,24 +207,15 @@ public sealed partial class ScaffoldingServer : IAsyncDisposable
     }
 
     /// <summary>
-    /// c:ping - Verify server identity with fingerprint.
+    /// c:ping - Echo back request body for verification.
     /// </summary>
     private Models.ScaffoldingResponse HandlePing(Models.ScaffoldingRequest request)
     {
-        if (!request.Body.SequenceEqual(ScaffoldingFingerprint.Value))
-        {
-            _logger.LogWarning("Invalid fingerprint from client");
-            return new Models.ScaffoldingResponse
-            {
-                Status = 1,  // Error
-                Data = Encoding.UTF8.GetBytes("Invalid fingerprint")
-            };
-        }
-
+        // Echo back the request body
         return new Models.ScaffoldingResponse
         {
             Status = 0,
-            Data = ScaffoldingFingerprint.Value
+            Data = request.Body
         };
     }
 

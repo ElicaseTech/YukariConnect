@@ -32,13 +32,6 @@ public sealed partial class RoomController
         _logger.LogInformation("Host prepare: network={Network}, room={Room}",
             _runtime!.NetworkName, _runtime.RoomCode);
 
-        // Generate room code if not provided
-        if (string.IsNullOrEmpty(_runtime.RoomCode))
-        {
-            _runtime.RoomCode = ScaffoldingHelpers.GenerateRoomCode(
-                _runtime.NetworkName, _runtime.NetworkSecret);
-        }
-
         _state = RoomStateKind.Host_EasyTierStarting;
         EmitStatus();
     }
@@ -61,6 +54,7 @@ public sealed partial class RoomController
 
         // Start EasyTier with host configuration
         var env = _serviceProvider.GetRequiredService<IHostEnvironment>();
+        var publicServers = _serviceProvider.GetRequiredService<PublicServersService>();
         var resourceDir = Path.Combine(env.ContentRootPath, "resource");
         var coreExe = Path.Combine(resourceDir, OperatingSystem.IsWindows() ? "easytier-core.exe" : "easytier-core");
 
@@ -73,6 +67,8 @@ public sealed partial class RoomController
         }
 
         var hostname = ScaffoldingHelpers.GenerateCenterHostname(_runtime.ScaffoldingPort);
+        var defaultServer = publicServers.GetDefaultServer() ?? "udp://public-server.easytier.top:11010";
+
         var args = new List<string>
         {
             // Core options
@@ -92,8 +88,8 @@ public sealed partial class RoomController
             "--tcp-whitelist", _runtime.ScaffoldingPort.ToString(),
             "--tcp-whitelist", "25565",
             "--udp-whitelist", "25565",
-            // Public server
-            "--peer", "udp://public-server.easytier.top:11010",
+            // Public servers
+            "--peer", defaultServer,
             "--p2p"
         };
 
@@ -235,6 +231,25 @@ public sealed partial class RoomController
             _runtime.MinecraftPort = newPort;
             _runtime.ScaffoldingServer!.SetMinecraftPort(_runtime.MinecraftPort);
             _logger.LogInformation("Minecraft port updated to {Port}", _runtime.MinecraftPort ?? 0);
+
+            // Restart FakeServer with new port
+            if (_runtime.FakeServer != null)
+            {
+                try { await _runtime.FakeServer.DisposeAsync(); } catch { }
+                _runtime.FakeServer = null;
+            }
+
+            if (_runtime.MinecraftPort.HasValue)
+            {
+                var motd = $"{_runtime.PlayerName}'s World";
+                _runtime.FakeServer = new MinecraftFakeServer(
+                    _runtime.MinecraftPort.Value,
+                    motd,
+                    logger: _serviceProvider.GetRequiredService<ILogger<MinecraftFakeServer>>());
+                await _runtime.FakeServer.StartAsync(ct);
+                _logger.LogInformation("FakeServer broadcasting on port {Port}", _runtime.MinecraftPort);
+            }
+
             EmitStatus();
         }
 

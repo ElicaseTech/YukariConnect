@@ -51,6 +51,7 @@ public sealed partial class RoomController
         }
 
         var env = _serviceProvider.GetRequiredService<IHostEnvironment>();
+        var publicServers = _serviceProvider.GetRequiredService<PublicServersService>();
         var resourceDir = Path.Combine(env.ContentRootPath, "resource");
         var coreExe = Path.Combine(resourceDir, OperatingSystem.IsWindows() ? "easytier-core.exe" : "easytier-core");
 
@@ -61,6 +62,8 @@ public sealed partial class RoomController
             EmitStatus();
             return;
         }
+
+        var defaultServer = publicServers.GetDefaultServer() ?? "udp://public-server.easytier.top:11010";
 
         var args = new List<string>
         {
@@ -76,8 +79,8 @@ public sealed partial class RoomController
             // Allow all ports
             "--tcp-whitelist", "0",
             "--udp-whitelist", "0",
-            // Public server
-            "--peer", "udp://public-server.easytier.top:11010",
+            // Public servers
+            "--peer", defaultServer,
             "--p2p"
         };
 

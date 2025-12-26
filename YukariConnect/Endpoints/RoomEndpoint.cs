@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http.HttpResults;
+using System.Text.Json.Serialization;
 using YukariConnect.Scaffolding;
 
 namespace YukariConnect.Endpoints;
@@ -6,34 +7,36 @@ namespace YukariConnect.Endpoints;
 public static class RoomEndpoint
 {
     public record RoomStatusResponse(
-        string State,
-        string? Role,
-        string? Error,
-        string? RoomCode,
-        List<PlayerInfoDto> Players,
-        int? MinecraftPort,
-        DateTimeOffset LastUpdate
+        [property: JsonPropertyName("state")] string State,
+        [property: JsonPropertyName("role")] string? Role,
+        [property: JsonPropertyName("error")] string? Error,
+        [property: JsonPropertyName("roomCode")] string? RoomCode,
+        [property: JsonPropertyName("players")] List<PlayerInfoDto> Players,
+        [property: JsonPropertyName("minecraftPort")] int? MinecraftPort,
+        [property: JsonPropertyName("lastUpdate")] DateTimeOffset LastUpdate
     );
 
     public record PlayerInfoDto(
-        string Name,
-        string MachineId,
-        string Vendor,
-        string Kind
+        [property: JsonPropertyName("name")] string Name,
+        [property: JsonPropertyName("machineId")] string MachineId,
+        [property: JsonPropertyName("vendor")] string Vendor,
+        [property: JsonPropertyName("kind")] string Kind
     );
 
     public record StartHostRequest(
-        string? RoomCode,
-        string NetworkName,
-        string NetworkSecret,
-        ushort ScaffoldingPort = 13448,
-        string PlayerName = "Host"
+        [property: JsonPropertyName("scaffoldingPort")] ushort ScaffoldingPort = 13448,
+        [property: JsonPropertyName("playerName")] string PlayerName = "Host",
+        [property: JsonPropertyName("launcherCustomString")] string? LauncherCustomString = null
     );
 
     public record StartGuestRequest(
-        string RoomCode,
-        string PlayerName = "Guest"
+        [property: JsonPropertyName("roomCode")] string RoomCode,
+        [property: JsonPropertyName("playerName")] string PlayerName = "Guest",
+        [property: JsonPropertyName("launcherCustomString")] string? LauncherCustomString = null
     );
+
+    public record MessageResponse([property: JsonPropertyName("message")] string Message);
+    public record ErrorResponse([property: JsonPropertyName("error")] string Error);
 
     public static void Map(WebApplication app)
     {
@@ -69,18 +72,16 @@ public static class RoomEndpoint
         try
         {
             await controller.StartHostAsync(
-                request.RoomCode,
-                request.NetworkName,
-                request.NetworkSecret,
                 request.ScaffoldingPort,
                 request.PlayerName,
+                request.LauncherCustomString,
                 ct);
 
-            return TypedResults.Ok(new { message = "Host starting..." });
+            return TypedResults.Ok(new MessageResponse("Host starting..."));
         }
         catch (Exception ex)
         {
-            return TypedResults.BadRequest(new { error = ex.Message });
+            return TypedResults.BadRequest(new ErrorResponse(ex.Message));
         }
     }
 
@@ -91,13 +92,14 @@ public static class RoomEndpoint
             await controller.StartGuestAsync(
                 request.RoomCode,
                 request.PlayerName,
+                request.LauncherCustomString,
                 ct);
 
-            return TypedResults.Ok(new { message = "Guest joining..." });
+            return TypedResults.Ok(new MessageResponse("Guest joining..."));
         }
         catch (Exception ex)
         {
-            return TypedResults.BadRequest(new { error = ex.Message });
+            return TypedResults.BadRequest(new ErrorResponse(ex.Message));
         }
     }
 
@@ -106,11 +108,11 @@ public static class RoomEndpoint
         try
         {
             await controller.StopAsync();
-            return TypedResults.Ok(new { message = "Room stopped" });
+            return TypedResults.Ok(new MessageResponse("Room stopped"));
         }
         catch (Exception ex)
         {
-            return TypedResults.BadRequest(new { error = ex.Message });
+            return TypedResults.BadRequest(new ErrorResponse(ex.Message));
         }
     }
 }

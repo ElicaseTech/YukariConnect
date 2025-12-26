@@ -20,6 +20,7 @@ namespace YukariConnect
             builder.Services.AddOpenApi();
             builder.Services.AddHostedService<EasyTierResourceInitializer>();
             builder.Services.AddSingleton<EasyTierCliService>();
+            builder.Services.AddSingleton<PublicServersService>();
 
             // Register Minecraft LAN services
             builder.Services.AddSingleton<MinecraftLanState>();
@@ -30,10 +31,25 @@ namespace YukariConnect
 
             var app = builder.Build();
 
+            // Register shutdown handler to clean up RoomController
+            app.Lifetime.ApplicationStopping.Register(() =>
+            {
+                var roomController = app.Services.GetService<RoomController>();
+                if (roomController != null)
+                {
+                    roomController.DisposeAsync().AsTask().GetAwaiter().GetResult();
+                }
+            });
+
             if (app.Environment.IsDevelopment())
             {
                 app.MapOpenApi();
             }
+
+            // Enable static files for web console
+            app.UseFileServer();
+            // Redirect root to index.html
+            app.MapGet("/", () => Results.Redirect("/index.html"));
 
             // Map all endpoints
             MetaEndpoint.Map(app);
@@ -45,6 +61,7 @@ namespace YukariConnect
             PanicEndpoint.Map(app);
             MinecraftEndpoint.Map(app);
             RoomEndpoint.Map(app);
+            EasyTierEndpoint.Map(app);
 
             app.Run();
         }
@@ -64,6 +81,8 @@ namespace YukariConnect
     [JsonSerializable(typeof(YukariConnect.Endpoints.RoomEndpoint.PlayerInfoDto))]
     [JsonSerializable(typeof(YukariConnect.Endpoints.RoomEndpoint.StartHostRequest))]
     [JsonSerializable(typeof(YukariConnect.Endpoints.RoomEndpoint.StartGuestRequest))]
+    [JsonSerializable(typeof(YukariConnect.Endpoints.RoomEndpoint.MessageResponse))]
+    [JsonSerializable(typeof(YukariConnect.Endpoints.RoomEndpoint.ErrorResponse))]
     internal partial class AppJsonSerializerContext : JsonSerializerContext
     {
     }

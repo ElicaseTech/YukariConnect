@@ -94,28 +94,34 @@ public sealed partial class RoomController : IAsyncDisposable
     /// Start as HostCenter.
     /// </summary>
     public async Task StartHostAsync(
-        string? roomCode,
-        string networkName,
-        string networkSecret,
         ushort scaffoldingPort = 13448,
         string playerName = "Host",
+        string? launcherCustomString = null,
         CancellationToken ct = default)
     {
         if (_loop != null)
             throw new InvalidOperationException("Already running.");
 
         var machineId = ScaffoldingHelpers.LoadOrCreateMachineId(_machineIdPath);
+        var roomCode = ScaffoldingHelpers.GenerateRoomCode();
+
+        if (!ScaffoldingHelpers.TryParseRoomCode(roomCode, out var networkName, out var networkSecret))
+            throw new InvalidOperationException("Generated invalid room code");
+
+        // Get ET version for vendor string
+        var etService = _serviceProvider.GetRequiredService<EasyTierCliService>();
+        var etVersion = await etService.GetVersionAsync(ct);
 
         _runtime = new RoomRuntime
         {
             Role = RoomRole.HostCenter,
-            RoomCode = roomCode ?? ScaffoldingHelpers.GenerateRoomCode(networkName, networkSecret),
+            RoomCode = roomCode,
             NetworkName = networkName,
             NetworkSecret = networkSecret,
             ScaffoldingPort = scaffoldingPort,
             MachineId = machineId,
             PlayerName = playerName,
-            Vendor = "YukariConnect 1.0"
+            Vendor = ScaffoldingHelpers.GetVendorString(etVersion, launcherCustomString)
         };
 
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -133,6 +139,7 @@ public sealed partial class RoomController : IAsyncDisposable
     public async Task StartGuestAsync(
         string roomCode,
         string playerName = "Guest",
+        string? launcherCustomString = null,
         CancellationToken ct = default)
     {
         if (_loop != null)
@@ -143,6 +150,10 @@ public sealed partial class RoomController : IAsyncDisposable
 
         var machineId = ScaffoldingHelpers.LoadOrCreateMachineId(_machineIdPath);
 
+        // Get ET version for vendor string
+        var etService = _serviceProvider.GetRequiredService<EasyTierCliService>();
+        var etVersion = await etService.GetVersionAsync(ct);
+
         _runtime = new RoomRuntime
         {
             Role = RoomRole.Guest,
@@ -152,7 +163,7 @@ public sealed partial class RoomController : IAsyncDisposable
             ScaffoldingPort = 13448, // Default, will be discovered
             MachineId = machineId,
             PlayerName = playerName,
-            Vendor = "YukariConnect 1.0"
+            Vendor = ScaffoldingHelpers.GetVendorString(etVersion, launcherCustomString)
         };
 
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -255,6 +266,7 @@ public sealed partial class RoomController : IAsyncDisposable
 
         try { await (_runtime.ScaffoldingClient?.DisposeAsync() ?? ValueTask.CompletedTask); } catch { }
         try { (_runtime.ScaffoldingServer as IAsyncDisposable)?.DisposeAsync(); } catch { }
+        try { await (_runtime.FakeServer?.DisposeAsync() ?? ValueTask.CompletedTask); } catch { }
 
         if (_runtime.EasyTierProcess != null && !_runtime.EasyTierProcess.HasExited)
         {
@@ -263,6 +275,7 @@ public sealed partial class RoomController : IAsyncDisposable
 
         _runtime.ScaffoldingClient = null;
         _runtime.ScaffoldingServer = null;
+        _runtime.FakeServer = null;
         _runtime.EasyTierProcess = null;
     }
 }

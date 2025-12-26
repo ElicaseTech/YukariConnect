@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YukariConnect 控制台</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 {
+            text-align: center;
+            padding: 20px;
+            color: #00d4ff;
+            text-shadow: 0 0 10px rgba(0,212,255,0.5);
+        }
+        .card {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+        .card h2 {
+            color: #00d4ff;
+            margin-bottom: 15px;
+            font-size: 18px;
+            border-bottom: 1px solid #0f3460;
+            padding-bottom: 10px;
+        }
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        .status-item {
+            background: #0f3460;
+            padding: 15px;
+            border-radius: 8px;
+        }
+        .status-item label {
+            color: #888;
+            font-size: 12px;
+            display: block;
+            margin-bottom: 5px;
+        }
+        .status-item .value {
+            color: #00d4ff;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        .status-item .value.state { color: #00ff88; }
+        .status-item .value.error { color: #ff4757; }
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102,126,234,0.4);
+        }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .btn-danger {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        input {
+            background: #0f3460;
+            border: 1px solid #1a1a2e;
+            color: #eee;
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 14px;
+            flex: 1;
+        }
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        .form-group label {
+            display: block;
+            color: #888;
+            margin-bottom: 5px;
+            font-size: 12px;
+        }
+        .player-list {
+            display: grid;
+            gap: 10px;
+        }
+        .player-item {
+            background: #0f3460;
+            padding: 12px;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .player-name {
+            font-weight: bold;
+        }
+        .player-kind {
+            background: #667eea;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+        }
+        .player-kind.host {
+            background: #00ff88;
+            color: #1a1a2e;
+        }
+        .log-container {
+            background: #0a0a0a;
+            border-radius: 8px;
+            padding: 15px;
+            height: 300px;
+            overflow-y: auto;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 12px;
+        }
+        .log-entry {
+            padding: 4px 0;
+            border-bottom: 1px solid #1a1a2e;
+        }
+        .log-time {
+            color: #666;
+            margin-right: 10px;
+        }
+        .log-level-info { color: #00d4ff; }
+        .log-level-warn { color: #ffa502; }
+        .log-level-error { color: #ff4757; }
+        .room-code {
+            font-family: 'Consolas', monospace;
+            font-size: 24px;
+            color: #00ff88;
+            text-align: center;
+            padding: 20px;
+            background: #0a0a0a;
+            border-radius: 8px;
+            letter-spacing: 2px;
+            user-select: all;
+        }
+        .room-code-container {
+            text-align: center;
+        }
+        .room-code-label {
+            color: #888;
+            margin-bottom: 10px;
+        }
+        .hidden { display: none; }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .loading {
+            animation: pulse 1.5s infinite;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎮 YukariConnect 控制台</h1>
+
+        <!-- Status Card -->
+        <div class="card">
+            <h2>📊 当前状态</h2>
+            <div class="status-grid">
+                <div class="status-item">
+                    <label>状态</label>
+                    <div class="value state" id="state">Idle</div>
+                </div>
+                <div class="status-item">
+                    <label>角色</label>
+                    <div class="value" id="role">-</div>
+                </div>
+                <div class="status-item">
+                    <label>MC 端口</label>
+                    <div class="value" id="mcPort">-</div>
+                </div>
+                <div class="status-item">
+                    <label>玩家数量</label>
+                    <div class="value" id="playerCount">0</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Room Code (Host only) -->
+        <div class="card room-code-container hidden" id="roomCodeCard">
+            <div class="room-code-label">房间码 (分享给好友)</div>
+            <div class="room-code" id="roomCode">-</div>
+        </div>
+
+        <!-- Host Controls -->
+        <div class="card">
+            <h2>🏠 创建房间 (Host)</h2>
+            <div class="form-group">
+                <label>玩家名称</label>
+                <input type="text" id="hostPlayerName" value="Host" placeholder="你的玩家名称">
+            </div>
+            <div class="btn-group">
+                <button class="btn" id="btnStartHost" onclick="startHost()">创建房间</button>
+                <button class="btn btn-danger" id="btnStopHost" onclick="stopRoom()" disabled>停止房间</button>
+            </div>
+        </div>
+
+        <!-- Guest Controls -->
+        <div class="card">
+            <h2>🎮 加入房间 (Guest)</h2>
+            <div class="form-group">
+                <label>房间码</label>
+                <input type="text" id="guestRoomCode" placeholder="U/AB12-CD34-EF56-GH78">
+            </div>
+            <div class="form-group">
+                <label>玩家名称</label>
+                <input type="text" id="guestPlayerName" value="Guest" placeholder="你的玩家名称">
+            </div>
+            <div class="btn-group">
+                <button class="btn" id="btnJoinRoom" onclick="joinRoom()">加入房间</button>
+            </div>
+        </div>
+
+        <!-- Players -->
+        <div class="card">
+            <h2>👥 玩家列表</h2>
+            <div class="player-list" id="playerList">
+                <div style="color: #888; text-align: center; padding: 20px;">暂无玩家</div>
+            </div>
+        </div>
+
+        <!-- Logs -->
+        <div class="card">
+            <h2>📜 日志</h2>
+            <div class="log-container" id="logContainer">
+                <div class="log-entry"><span class="log-time">--:--:--</span><span class="log-level-info">[INFO]</span> 控制台已启动</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '';
+        let statusInterval = null;
+        let lastState = null;
+
+        // Start Host
+        async function startHost() {
+            const playerName = document.getElementById('hostPlayerName').value || 'Host';
+
+            try {
+                addLog('info', '正在创建房间...');
+
+                const response = await fetch(`${API_BASE}/room/host/start`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ playerName })
+                });
+
+                if (response.ok) {
+                    addLog('info', '房间创建成功！');
+                    startPolling();
+                } else {
+                    const error = await response.json();
+                    addLog('error', error.error || '创建房间失败');
+                }
+            } catch (e) {
+                addLog('error', '网络错误: ' + e.message);
+            }
+        }
+
+        // Join Room
+        async function joinRoom() {
+            const roomCode = document.getElementById('guestRoomCode').value.trim();
+            const playerName = document.getElementById('guestPlayerName').value || 'Guest';
+
+            if (!roomCode) {
+                addLog('warn', '请输入房间码');
+                return;
+            }
+
+            try {
+                addLog('info', `正在加入房间 ${roomCode}...`);
+
+                const response = await fetch(`${API_BASE}/room/guest/start`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ roomCode, playerName })
+                });
+
+                if (response.ok) {
+                    addLog('info', '正在连接房间...');
+                    startPolling();
+                } else {
+                    const error = await response.json();
+                    addLog('error', error.error || '加入房间失败');
+                }
+            } catch (e) {
+                addLog('error', '网络错误: ' + e.message);
+            }
+        }
+
+        // Stop Room
+        async function stopRoom() {
+            try {
+                addLog('info', '正在停止房间...');
+
+                const response = await fetch(`${API_BASE}/room/stop`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    addLog('info', '房间已停止');
+                    updateStatus({ state: 'Idle', role: null, players: [], minecraftPort: null, roomCode: null });
+                } else {
+                    addLog('error', '停止房间失败');
+                }
+            } catch (e) {
+                addLog('error', '网络错误: ' + e.message);
+            }
+        }
+
+        // Update Status
+        async function updateStatus() {
+            try {
+                const response = await fetch(`${API_BASE}/room/status`);
+                const data = await response.json();
+
+                updateUI(data);
+                lastState = data;
+
+                // Auto-stop polling if idle
+                if (data.state === 'Idle' || data.state === 'Error') {
+                    stopPolling();
+                }
+            } catch (e) {
+                console.error('Failed to fetch status:', e);
+            }
+        }
+
+        // Update UI
+        function updateUI(data) {
+            document.getElementById('state').textContent = data.state;
+            document.getElementById('role').textContent = data.role || '-';
+            document.getElementById('mcPort').textContent = data.minecraftPort || '-';
+            document.getElementById('playerCount').textContent = data.players?.length || 0;
+
+            // Room code
+            const roomCodeCard = document.getElementById('roomCodeCard');
+            if (data.roomCode && data.role === 'HostCenter') {
+                roomCodeCard.classList.remove('hidden');
+                document.getElementById('roomCode').textContent = data.roomCode;
+            } else {
+                roomCodeCard.classList.add('hidden');
+            }
+
+            // Players
+            const playerList = document.getElementById('playerList');
+            if (data.players && data.players.length > 0) {
+                playerList.innerHTML = data.players.map(p => `
+                    <div class="player-item">
+                        <span class="player-name">${escapeHtml(p.name)}</span>
+                        <span class="player-kind ${p.kind === 'Host' ? 'host' : ''}">${p.kind}</span>
+                    </div>
+                `).join('');
+            } else {
+                playerList.innerHTML = '<div style="color: #888; text-align: center; padding: 20px;">暂无玩家</div>';
+            }
+
+            // Buttons
+            const isRunning = data.state && data.state !== 'Idle' && data.state !== 'Error';
+            document.getElementById('btnStartHost').disabled = isRunning;
+            document.getElementById('btnJoinRoom').disabled = isRunning;
+            document.getElementById('btnStopHost').disabled = !isRunning;
+
+            // State color
+            const stateEl = document.getElementById('state');
+            stateEl.className = 'value';
+            if (data.state === 'Error') {
+                stateEl.classList.add('error');
+            } else if (data.state !== 'Idle') {
+                stateEl.classList.add('state');
+            }
+        }
+
+        // Start/Stop Polling
+        function startPolling() {
+            if (statusInterval) return;
+            updateStatus();
+            statusInterval = setInterval(updateStatus, 2000);
+        }
+
+        function stopPolling() {
+            if (statusInterval) {
+                clearInterval(statusInterval);
+                statusInterval = null;
+            }
+        }
+
+        // Add Log
+        function addLog(level, message) {
+            const container = document.getElementById('logContainer');
+            const time = new Date().toLocaleTimeString();
+            const levelClass = `log-level-${level}`;
+
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `<span class="log-time">${time}</span><span class="${levelClass}">[${level.toUpperCase()}]</span> ${escapeHtml(message)}`;
+
+            container.appendChild(entry);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // Escape HTML
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Initial load
+        updateStatus();
+    </script>
+</body>
+</html>

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using YukariConnect.Minecraft.Services;
 using YukariConnect.Scaffolding.Models;
 
 namespace YukariConnect.Scaffolding;
@@ -98,6 +99,9 @@ public sealed class RoomRuntime
     public Process? EasyTierProcess { get; set; }
     public ScaffoldingServer? ScaffoldingServer { get; set; }
     public ScaffoldingClient? ScaffoldingClient { get; set; }
+
+    // Fake MC server for broadcasting to virtual network
+    public MinecraftFakeServer? FakeServer { get; set; }
 }
 
 /// <summary>
