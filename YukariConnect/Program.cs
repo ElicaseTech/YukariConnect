@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http.HttpResults;
 using YukariConnect.Minecraft.Models;
 using YukariConnect.Minecraft.Services;
 using YukariConnect.Endpoints;
+using YukariConnect.Services;
 
 namespace YukariConnect
 {
@@ -20,6 +21,7 @@ namespace YukariConnect
 
             // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
             builder.Services.AddOpenApi();
+            builder.Services.AddHostedService<EasyTierResourceInitializer>();
 
             // Register Minecraft LAN services
             builder.Services.AddSingleton<MinecraftLanState>();
