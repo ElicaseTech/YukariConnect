@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using YukariConnect.Endpoints;
 using YukariConnect.Services;
 using YukariConnect.Minecraft.Services;
+using YukariConnect.Scaffolding;
 
 namespace YukariConnect
 {
@@ -24,6 +25,9 @@ namespace YukariConnect
             builder.Services.AddSingleton<MinecraftLanState>();
             builder.Services.AddHostedService<MinecraftLanListener>();
 
+            // Register Scaffolding services
+            builder.Services.AddSingleton<RoomController>();
+
             var app = builder.Build();
 
             if (app.Environment.IsDevelopment())
@@ -40,6 +44,7 @@ namespace YukariConnect
             LogEndpoint.Map(app);
             PanicEndpoint.Map(app);
             MinecraftEndpoint.Map(app);
+            RoomEndpoint.Map(app);
 
             app.Run();
         }
@@ -55,6 +60,10 @@ namespace YukariConnect
     [JsonSerializable(typeof(YukariConnect.Endpoints.MinecraftEndpoint.MinecraftServerListResponse))]
     [JsonSerializable(typeof(YukariConnect.Endpoints.MinecraftEndpoint.MinecraftServerDto))]
     [JsonSerializable(typeof(YukariConnect.Endpoints.MinecraftEndpoint.MinecraftStatusResponse))]
+    [JsonSerializable(typeof(YukariConnect.Endpoints.RoomEndpoint.RoomStatusResponse))]
+    [JsonSerializable(typeof(YukariConnect.Endpoints.RoomEndpoint.PlayerInfoDto))]
+    [JsonSerializable(typeof(YukariConnect.Endpoints.RoomEndpoint.StartHostRequest))]
+    [JsonSerializable(typeof(YukariConnect.Endpoints.RoomEndpoint.StartGuestRequest))]
     internal partial class AppJsonSerializerContext : JsonSerializerContext
     {
     }
