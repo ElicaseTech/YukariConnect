@@ -1,40 +1,50 @@
 using System.Collections.Concurrent;
+using System.Linq;
 using System.Net;
 using YukariConnect.Minecraft.Models;
 
 namespace YukariConnect.Minecraft.Services;
 
 /// <summary>
-/// Manages the current state of all known Minecraft LAN servers.
-/// Thread-safe for use from API endpoints and background listener events.
+/// Manages the current state of all discovered and verified Minecraft servers.
 /// </summary>
 public sealed class MinecraftLanState
 {
-    // Key: sender IP address
-    private readonly ConcurrentDictionary<IPAddress, MinecraftLanAnnounce> _servers
+    // Key: server IP address
+    private readonly ConcurrentDictionary<IPAddress, MinecraftServerInfo> _servers
         = new();
 
     /// <summary>
-    /// Gets all currently online servers.
+    /// Gets all servers (both discovered and verified).
     /// </summary>
-    public IReadOnlyCollection<MinecraftLanAnnounce> OnlineServers => _servers.Values.ToList().AsReadOnly();
+    public IReadOnlyCollection<MinecraftServerInfo> AllServers => _servers.Values.ToList().AsReadOnly();
 
     /// <summary>
-    /// Gets the count of online servers.
+    /// Gets only verified servers (successfully pinged).
     /// </summary>
-    public int OnlineCount => _servers.Count;
+    public IReadOnlyCollection<MinecraftServerInfo> VerifiedServers =>
+        _servers.Values.Where(s => s.IsVerified).ToList().AsReadOnly();
+
+    /// <summary>
+    /// Gets total server count.
+    /// </summary>
+    public int TotalCount => _servers.Count;
+
+    /// <summary>
+    /// Gets verified server count.
+    /// </summary>
+    public int VerifiedCount => _servers.Values.Count(s => s.IsVerified);
 
     /// <summary>
     /// Gets a server by IP address, or null if not found.
     /// </summary>
-    public MinecraftLanAnnounce? GetServer(IPAddress address) =>
+    public MinecraftServerInfo? GetServer(IPAddress address) =>
         _servers.TryGetValue(address, out var server) ? server : null;
 
     /// <summary>
     /// Finds servers with a specific pattern in their MOTD.
-    /// Useful for filtering Scaffolding rooms.
     /// </summary>
-    public IReadOnlyCollection<MinecraftLanAnnounce> FindServersByMotdPattern(string pattern)
+    public IReadOnlyCollection<MinecraftServerInfo> FindServersByMotdPattern(string pattern)
     {
         return _servers.Values
             .Where(s => s.Motd.Contains(pattern, StringComparison.OrdinalIgnoreCase))
@@ -43,17 +53,15 @@ public sealed class MinecraftLanState
     }
 
     /// <summary>
-    /// Adds or updates a server announcement.
-    /// Called by the listener when receiving broadcasts.
+    /// Adds or updates a server. Called by listener on discovery/verification.
     /// </summary>
-    internal void AddOrUpdate(MinecraftLanAnnounce announce)
+    internal void AddOrUpdate(MinecraftServerInfo server)
     {
-        _servers[announce.Sender.Address] = announce;
+        _servers[server.EndPoint.Address] = server;
     }
 
     /// <summary>
-    /// Removes a server when it goes offline.
-    /// Called by the listener sweep loop.
+    /// Removes a server. Called by listener when server goes offline/stale.
     /// </summary>
     internal bool Remove(IPAddress address) => _servers.TryRemove(address, out _);
 }

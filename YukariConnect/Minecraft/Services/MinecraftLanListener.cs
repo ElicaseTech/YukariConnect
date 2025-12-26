@@ -7,8 +7,7 @@ using YukariConnect.Minecraft.Models;
 namespace YukariConnect.Minecraft.Services;
 
 /// <summary>
-/// Listens for Minecraft LAN broadcasts (UDP 4445, multicast 224.0.2.60).
-/// Maintains online/offline state based on timeout.
+/// Listens for Minecraft LAN broadcasts and verifies servers via ping.
 /// </summary>
 public sealed partial class MinecraftLanListener : IHostedService, IAsyncDisposable
 {
@@ -17,52 +16,36 @@ public sealed partial class MinecraftLanListener : IHostedService, IAsyncDisposa
         RegexOptions.Singleline)]
     private static partial Regex LanRegex();
 
-    private readonly IPAddress _multicastAddr = IPAddress.Parse("224.0.2.60");
-    private const int Port = 4445;
+    private const int MulticastPort = 4445;
+    private static readonly IPAddress MulticastAddr = IPAddress.Parse("224.0.2.60");
 
-    private readonly TimeSpan _staleTimeout;
-    private readonly TimeSpan _sweepInterval;
     private readonly ILogger<MinecraftLanListener> _logger;
     private readonly MinecraftLanState _state;
+    private readonly MinecraftPingService _pingService;
+    private readonly TimeSpan _pingInterval;
+    private readonly TimeSpan _broadcastTimeout;
 
     private Socket? _socket;
     private CancellationTokenSource? _cts;
     private Task? _recvLoop;
-    private Task? _sweepLoop;
+    private Task? _pingLoop;
+    private Task? _cleanupLoop;
 
-    // Key: sender IP address
-    private readonly ConcurrentDictionary<IPAddress, (MinecraftLanAnnounce Ann, DateTimeOffset LastSeen)> _alive
+    // Key: server IP
+    private readonly ConcurrentDictionary<IPAddress, MinecraftServerInfo> _discovered
         = new();
-
-    /// <summary>
-    /// Fired when any announcement is received (heartbeat).
-    /// </summary>
-    public event Action<MinecraftLanAnnounce>? OnAnnounce;
-
-    /// <summary>
-    /// Fired when a server comes online (first announcement).
-    /// </summary>
-    public event Action<MinecraftLanAnnounce>? OnOnline;
-
-    /// <summary>
-    /// Fired when a server goes offline (timeout).
-    /// </summary>
-    public event Action<MinecraftLanAnnounce>? OnOffline;
-
-    /// <summary>
-    /// Gets the shared state service for querying servers via API.
-    /// </summary>
-    public MinecraftLanState State => _state;
 
     public MinecraftLanListener(
         MinecraftLanState? state = null,
-        TimeSpan? staleTimeout = null,
-        TimeSpan? sweepInterval = null,
+        MinecraftPingService? pingService = null,
+        TimeSpan? pingInterval = null,
+        TimeSpan? broadcastTimeout = null,
         ILogger<MinecraftLanListener>? logger = null)
     {
         _state = state ?? new MinecraftLanState();
-        _staleTimeout = staleTimeout ?? TimeSpan.FromSeconds(6);
-        _sweepInterval = sweepInterval ?? TimeSpan.FromSeconds(2);
+        _pingService = pingService ?? new MinecraftPingService();
+        _pingInterval = pingInterval ?? TimeSpan.FromSeconds(10);
+        _broadcastTimeout = broadcastTimeout ?? TimeSpan.FromSeconds(30);
         _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<MinecraftLanListener>.Instance;
     }
 
@@ -74,40 +57,20 @@ public sealed partial class MinecraftLanListener : IHostedService, IAsyncDisposa
 
         try
         {
-            // UDP socket
             _socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
             _socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+            _socket.Bind(new IPEndPoint(IPAddress.Any, MulticastPort));
 
-            // Bind to 0.0.0.0:4445 to receive multicast
-            _socket.Bind(new IPEndPoint(IPAddress.Any, Port));
+            // Try to join multicast on all interfaces
+            JoinMulticastOnAllInterfaces();
 
-            // Join multicast group 224.0.2.60 on ALL available IPv4 interfaces
-            var interfaces = GetAllLocalIPv4();
-            if (interfaces.Count == 0)
-            {
-                throw new InvalidOperationException("No usable IPv4 interface found for multicast membership.");
-            }
-
-            foreach (var iface in interfaces)
-            {
-                try
-                {
-                    _socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.AddMembership,
-                        new MulticastOption(_multicastAddr, iface));
-                    _logger.LogInformation("Joined multicast group on interface {Interface}", iface);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to join multicast group on {Interface}", iface);
-                }
-            }
             _socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastLoopback, true);
 
             _recvLoop = Task.Run(() => ReceiveLoopAsync(_cts.Token), _cts.Token);
-            _sweepLoop = Task.Run(() => SweepLoopAsync(_cts.Token), _cts.Token);
+            _pingLoop = Task.Run(() => PingLoopAsync(_cts.Token), _cts.Token);
+            _cleanupLoop = Task.Run(() => CleanupLoopAsync(_cts.Token), _cts.Token);
 
-            _logger.LogInformation("Minecraft LAN listener started on {MulticastAddr}:{Port}",
-                _multicastAddr, Port);
+            _logger.LogInformation("Minecraft LAN listener started");
         }
         catch (Exception ex)
         {
@@ -118,17 +81,42 @@ public sealed partial class MinecraftLanListener : IHostedService, IAsyncDisposa
         return Task.CompletedTask;
     }
 
+    private void JoinMulticastOnAllInterfaces()
+    {
+        var interfaces = GetAllLocalIPv4();
+        int joined = 0;
+
+        foreach (var iface in interfaces)
+        {
+            try
+            {
+                _socket!.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.AddMembership,
+                    new MulticastOption(MulticastAddr, iface));
+                joined++;
+            }
+            catch
+            {
+                // Silently skip interfaces that don't support multicast
+            }
+        }
+
+        _logger.LogInformation("Joined multicast on {Count}/{Total} interfaces", joined, interfaces.Count);
+    }
+
     public async Task StopAsync(CancellationToken cancellationToken)
     {
         if (_cts == null) return;
 
-        try { _cts.Cancel(); } catch { /* ignore */ }
+        _cts.Cancel();
 
-        if (_recvLoop != null) await SafeAwait(_recvLoop);
-        if (_sweepLoop != null) await SafeAwait(_sweepLoop);
+        await Task.WhenAll(
+            SafeAwait(_recvLoop),
+            SafeAwait(_pingLoop),
+            SafeAwait(_cleanupLoop)
+        );
 
-        try { _socket?.Close(); } catch { /* ignore */ }
-        try { _socket?.Dispose(); } catch { /* ignore */ }
+        try { _socket?.Close(); } catch { }
+        try { _socket?.Dispose(); } catch { }
 
         _cts.Dispose();
         _cts = null;
@@ -161,9 +149,8 @@ public sealed partial class MinecraftLanListener : IHostedService, IAsyncDisposa
             }
             catch (OperationCanceledException) { break; }
             catch (ObjectDisposedException) { break; }
-            catch (Exception ex)
+            catch
             {
-                _logger.LogWarning(ex, "Error receiving Minecraft LAN broadcast");
                 continue;
             }
 
@@ -172,61 +159,100 @@ public sealed partial class MinecraftLanListener : IHostedService, IAsyncDisposa
             var sender = (IPEndPoint)remote;
             var payload = System.Text.Encoding.UTF8.GetString(buf, 0, len);
 
-            // Only log at debug level for heartbeat packets (to avoid log spam)
-            _logger.LogDebug("Received {Length} bytes from {Sender}: {Payload}",
-                len, sender, payload.Replace("\n", "\\n").Replace("\r", "\\r"));
-
             var ann = TryParse(sender, payload);
-            if (ann == null)
-            {
-                _logger.LogDebug("Payload did not match MC LAN format from {Sender}", sender);
-                continue;
-            }
+            if (ann == null) continue;
 
-            OnAnnounce?.Invoke(ann);
-
-            var now = DateTimeOffset.UtcNow;
+            var endPoint = new IPEndPoint(sender.Address, ann.Port);
             var ip = sender.Address;
 
-            // First time seeing this server => Online
-            if (_alive.TryAdd(ip, (ann, now)))
+            // New discovery or update
+            var isNew = !_discovered.ContainsKey(ip);
+            _discovered.AddOrUpdate(ip,
+                _ => new MinecraftServerInfo
+                {
+                    EndPoint = endPoint,
+                    Motd = ann.Motd,
+                    RawMotd = ann.RawPayload,
+                    BroadcastSeenAt = DateTimeOffset.UtcNow
+                },
+                (_, existing) =>
+                {
+                    existing.BroadcastSeenAt = DateTimeOffset.UtcNow;
+                    return existing;
+                });
+
+            if (isNew)
             {
-                _logger.LogInformation("New Minecraft LAN server: {Address}:{Port} MOTD='{Motd}'",
-                    sender.Address, ann.Port, ann.Motd);
-                _state.AddOrUpdate(ann);
-                OnOnline?.Invoke(ann);
-            }
-            else
-            {
-                // Update last seen + latest announce
-                _alive[ip] = (ann, now);
-                _state.AddOrUpdate(ann);
+                _logger.LogInformation("Discovered MC server: {EndPoint} MOTD='{Motd}'",
+                    endPoint, ann.Motd);
             }
         }
     }
 
-    private async Task SweepLoopAsync(CancellationToken ct)
+    private async Task PingLoopAsync(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
         {
             try
             {
-                await Task.Delay(_sweepInterval, ct);
+                await Task.Delay(_pingInterval, ct);
+            }
+            catch (OperationCanceledException) { break; }
+
+            foreach (var kv in _discovered)
+            {
+                var server = kv.Value;
+                var result = await _pingService.PingAsync(server.EndPoint, ct);
+
+                if (result != null)
+                {
+                    if (!server.IsVerified)
+                    {
+                        _logger.LogInformation("Verified MC server: {EndPoint} Version={Version} Players={Online}/{Max}",
+                            server.EndPoint, result.Version, result.OnlinePlayers, result.MaxPlayers);
+                    }
+                    server.LastPingAt = DateTimeOffset.UtcNow;
+                    server.PingResult = result;
+                    _state.AddOrUpdate(server);
+                }
+            }
+        }
+    }
+
+    private async Task CleanupLoopAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5), ct);
             }
             catch (OperationCanceledException) { break; }
 
             var now = DateTimeOffset.UtcNow;
-            foreach (var kv in _alive)
+            foreach (var kv in _discovered)
             {
-                var last = kv.Value.LastSeen;
-                if (now - last <= _staleTimeout) continue;
+                var server = kv.Value;
 
-                // Timeout: offline
-                if (_alive.TryRemove(kv.Key, out var removed))
+                // Remove if no broadcast for a long time AND not verified
+                if (now - server.BroadcastSeenAt > _broadcastTimeout && !server.IsVerified)
                 {
-                    _logger.LogInformation("Minecraft LAN server offline: {Address}", kv.Key);
-                    _state.Remove(kv.Key);
-                    OnOffline?.Invoke(removed.Ann);
+                    if (_discovered.TryRemove(kv.Key, out _))
+                    {
+                        _logger.LogInformation("Removed stale MC server: {EndPoint}", server.EndPoint);
+                        _state.Remove(kv.Key);
+                    }
+                }
+
+                // Remove verified servers that haven't responded to ping in a while
+                if (server.IsVerified && server.LastPingAt.HasValue &&
+                    now - server.LastPingAt.Value > TimeSpan.FromMinutes(2))
+                {
+                    if (_discovered.TryRemove(kv.Key, out _))
+                    {
+                        _logger.LogInformation("Verified MC server went offline: {EndPoint}", server.EndPoint);
+                        _state.Remove(kv.Key);
+                    }
                 }
             }
         }
@@ -251,31 +277,34 @@ public sealed partial class MinecraftLanListener : IHostedService, IAsyncDisposa
         };
     }
 
-    /// <summary>
-    /// Gets all local IPv4 interfaces for multicast membership.
-    /// This ensures we receive broadcasts on all network interfaces.
-    /// </summary>
     private static List<IPAddress> GetAllLocalIPv4()
     {
         var result = new List<IPAddress>();
         foreach (var nic in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
         {
             if (nic.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up) continue;
-            if (nic.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.Loopback) continue;
+
+            var nicType = nic.NetworkInterfaceType;
+            if (nicType == System.Net.NetworkInformation.NetworkInterfaceType.Loopback) continue;
 
             var ipProps = nic.GetIPProperties();
             foreach (var ua in ipProps.UnicastAddresses)
             {
                 if (ua.Address.AddressFamily != AddressFamily.InterNetwork) continue;
                 if (IPAddress.IsLoopback(ua.Address)) continue;
+
+                // Skip link-local
+                var bytes = ua.Address.GetAddressBytes();
+                if (bytes[0] == 169 && bytes[1] == 254) continue;
+
                 result.Add(ua.Address);
             }
         }
         return result;
     }
 
-    private static async Task SafeAwait(Task t)
+    private static async Task SafeAwait(Task? t)
     {
-        try { await t.ConfigureAwait(false); } catch { /* ignore */ }
+        try { await (t ?? Task.CompletedTask).ConfigureAwait(false); } catch { }
     }
 }

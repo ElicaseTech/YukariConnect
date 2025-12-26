@@ -35,20 +35,19 @@ namespace YukariConnect
             // Minecraft LAN endpoints
             var mcApi = app.MapGroup("/minecraft");
             mcApi.MapGet("/servers", GetMinecraftServers)
-                .WithName("GetMinecraftServers")
-                .WithOpenApi();
+                .WithName("GetMinecraftServers");
+
+            mcApi.MapGet("/servers/verified", GetVerifiedServers)
+                .WithName("GetVerifiedServers");
 
             mcApi.MapGet("/servers/{ip}", GetMinecraftServerByIp)
-                .WithName("GetMinecraftServerByIp")
-                .WithOpenApi();
+                .WithName("GetMinecraftServerByIp");
 
             mcApi.MapGet("/servers/search", SearchMinecraftServers)
-                .WithName("SearchMinecraftServers")
-                .WithOpenApi();
+                .WithName("SearchMinecraftServers");
 
             mcApi.MapGet("/status", GetMinecraftStatus)
-                .WithName("GetMinecraftStatus")
-                .WithOpenApi();
+                .WithName("GetMinecraftStatus");
 
             // Original Todo endpoints (can be removed later)
             var todosApi = app.MapGroup("/todos");
@@ -71,18 +70,43 @@ namespace YukariConnect
         }
 
         /// <summary>
-        /// Get all currently online Minecraft LAN servers.
+        /// Get all discovered Minecraft servers (including unverified).
         /// </summary>
         static IResult GetMinecraftServers(MinecraftLanState state)
         {
             return TypedResults.Ok(new MinecraftServerListResponse(
-                state.OnlineServers.ToList(),
-                state.OnlineCount
+                state.AllServers.Select(s => new MinecraftServerDto(
+                    s.EndPoint.ToString(),
+                    s.Motd,
+                    s.IsVerified,
+                    s.PingResult?.Version,
+                    s.PingResult?.OnlinePlayers,
+                    s.PingResult?.MaxPlayers
+                )).ToList(),
+                state.TotalCount
             ));
         }
 
         /// <summary>
-        /// Get a specific Minecraft LAN server by IP address.
+        /// Get only verified Minecraft servers (successfully pinged).
+        /// </summary>
+        static IResult GetVerifiedServers(MinecraftLanState state)
+        {
+            return TypedResults.Ok(new MinecraftServerListResponse(
+                state.VerifiedServers.Select(s => new MinecraftServerDto(
+                    s.EndPoint.ToString(),
+                    s.Motd,
+                    s.IsVerified,
+                    s.PingResult?.Version,
+                    s.PingResult?.OnlinePlayers,
+                    s.PingResult?.MaxPlayers
+                )).ToList(),
+                state.VerifiedCount
+            ));
+        }
+
+        /// <summary>
+        /// Get a specific Minecraft server by IP address.
         /// </summary>
         static IResult GetMinecraftServerByIp(string ip, MinecraftLanState state)
         {
@@ -97,27 +121,35 @@ namespace YukariConnect
                 return TypedResults.NotFound(new ErrorResponse($"Server at {ip} not found or offline"));
             }
 
-            return TypedResults.Ok(server);
+            return TypedResults.Ok(new MinecraftServerDto(
+                server.EndPoint.ToString(),
+                server.Motd,
+                server.IsVerified,
+                server.PingResult?.Version,
+                server.PingResult?.OnlinePlayers,
+                server.PingResult?.MaxPlayers
+            ));
         }
 
         /// <summary>
-        /// Search for Minecraft LAN servers by MOTD pattern.
-        /// Useful for filtering Scaffolding rooms (e.g., ?pattern=Scaffolding).
+        /// Search for Minecraft servers by MOTD pattern.
         /// </summary>
         static IResult SearchMinecraftServers(string? pattern, MinecraftLanState state)
         {
-            if (string.IsNullOrWhiteSpace(pattern))
-            {
-                return TypedResults.Ok(new MinecraftServerListResponse(
-                    state.OnlineServers.ToList(),
-                    state.OnlineCount
-                ));
-            }
+            var servers = string.IsNullOrWhiteSpace(pattern)
+                ? state.AllServers
+                : state.FindServersByMotdPattern(pattern);
 
-            var results = state.FindServersByMotdPattern(pattern);
             return TypedResults.Ok(new MinecraftServerListResponse(
-                results.ToList(),
-                results.Count
+                servers.Select(s => new MinecraftServerDto(
+                    s.EndPoint.ToString(),
+                    s.Motd,
+                    s.IsVerified,
+                    s.PingResult?.Version,
+                    s.PingResult?.OnlinePlayers,
+                    s.PingResult?.MaxPlayers
+                )).ToList(),
+                servers.Count
             ));
         }
 
@@ -127,8 +159,8 @@ namespace YukariConnect
         static IResult GetMinecraftStatus(MinecraftLanState state)
         {
             return TypedResults.Ok(new MinecraftStatusResponse(
-                state.OnlineCount,
-                state.OnlineServers.Any(s => s.IsLocalHost),
+                state.TotalCount,
+                state.VerifiedCount,
                 DateTimeOffset.UtcNow
             ));
         }
@@ -136,14 +168,23 @@ namespace YukariConnect
 
     // Records for API responses
 
+    public record MinecraftServerDto(
+        string EndPoint,
+        string Motd,
+        bool IsVerified,
+        string? Version,
+        int? OnlinePlayers,
+        int? MaxPlayers
+    );
+
     public record MinecraftServerListResponse(
-        List<MinecraftLanAnnounce> Servers,
+        List<MinecraftServerDto> Servers,
         int Count
     );
 
     public record MinecraftStatusResponse(
-        int OnlineCount,
-        bool HasLocalServer,
+        int TotalServers,
+        int VerifiedServers,
         DateTimeOffset Timestamp
     );
 
@@ -153,8 +194,8 @@ namespace YukariConnect
     public record Todo(int Id, string? Title, DateOnly? DueBy = null, bool IsComplete = false);
 
     [JsonSerializable(typeof(MinecraftServerListResponse))]
-    [JsonSerializable(typeof(MinecraftLanAnnounce))]
-    [JsonSerializable(typeof(MinecraftLanAnnounce[]))]
+    [JsonSerializable(typeof(MinecraftServerDto))]
+    [JsonSerializable(typeof(MinecraftServerDto[]))]
     [JsonSerializable(typeof(MinecraftStatusResponse))]
     [JsonSerializable(typeof(ErrorResponse))]
     [JsonSerializable(typeof(Todo[]))]
