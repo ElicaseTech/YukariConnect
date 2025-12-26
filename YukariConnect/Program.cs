@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Http.HttpResults;
+using YukariConnect.Endpoints;
 
 namespace YukariConnect
 {
@@ -43,6 +44,14 @@ namespace YukariConnect
                     : TypedResults.NotFound())
                 .WithName("GetTodoById");
 
+            MetaEndpoint.Map(app);
+            StateEndpoint.Map(app);
+            StateIdeEndpoint.Map(app);
+            StateScanningEndpoint.Map(app);
+            StateGuestingEndpoint.Map(app);
+            LogEndpoint.Map(app);
+            PanicEndpoint.Map(app);
+
             app.Run();
         }
     }
@@ -50,6 +59,13 @@ namespace YukariConnect
     public record Todo(int Id, string? Title, DateOnly? DueBy = null, bool IsComplete = false);
 
     [JsonSerializable(typeof(Todo[]))]
+    [JsonSerializable(typeof(YukariConnect.Endpoints.MetaEndpoint.MetaResponse))]
+    [JsonSerializable(typeof(YukariConnect.Endpoints.StateEndpoint.StateResponse))]
+    [JsonSerializable(typeof(YukariConnect.Endpoints.StateIdeEndpoint.StateIdeResponse))]
+    [JsonSerializable(typeof(YukariConnect.Endpoints.StateScanningEndpoint.StateScanningResponse))]
+    [JsonSerializable(typeof(YukariConnect.Endpoints.StateGuestingEndpoint.StateGuestingResponse))]
+    [JsonSerializable(typeof(YukariConnect.Endpoints.LogEndpoint.LogResponse))]
+    [JsonSerializable(typeof(YukariConnect.Endpoints.PanicEndpoint.PanicResponse))]
     internal partial class AppJsonSerializerContext : JsonSerializerContext
     {
 
