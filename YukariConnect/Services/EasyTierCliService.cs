@@ -134,6 +134,114 @@ namespace YukariConnect.Services
             }
         }
 
+        /// <summary>
+        /// Set TCP port whitelist.
+        /// Usage: SetTcpWhitelistAsync(["80", "443", "8000-9000"])
+        /// </summary>
+        public async Task<bool> SetTcpWhitelistAsync(string[] ports, CancellationToken ct = default)
+        {
+            if (!File.Exists(_cliPath))
+            {
+                _logger.LogWarning("EasyTier CLI not found at {Path}", _cliPath);
+                return false;
+            }
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = _cliPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = Path.GetDirectoryName(_cliPath)!
+            };
+
+            psi.ArgumentList.Add("--output");
+            psi.ArgumentList.Add("json");
+            psi.ArgumentList.Add("-p");
+            psi.ArgumentList.Add(_rpcPortal);
+            psi.ArgumentList.Add("whitelist");
+            psi.ArgumentList.Add("set-tcp");
+            psi.ArgumentList.Add(string.Join(",", ports));
+
+            using var proc = new Process { StartInfo = psi };
+            try
+            {
+                proc.Start();
+                var stdout = await proc.StandardOutput.ReadToEndAsync(ct);
+                var stderr = await proc.StandardError.ReadToEndAsync(ct);
+                await proc.WaitForExitAsync(ct);
+
+                if (proc.ExitCode != 0)
+                {
+                    _logger.LogWarning("Set TCP whitelist failed. Error: {Error}", stderr);
+                    return false;
+                }
+
+                _logger.LogInformation("TCP whitelist set: {Ports}", string.Join(",", ports));
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to set TCP whitelist");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Set UDP port whitelist.
+        /// Usage: SetUdpWhitelistAsync(["53", "5000-6000"])
+        /// </summary>
+        public async Task<bool> SetUdpWhitelistAsync(string[] ports, CancellationToken ct = default)
+        {
+            if (!File.Exists(_cliPath))
+            {
+                _logger.LogWarning("EasyTier CLI not found at {Path}", _cliPath);
+                return false;
+            }
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = _cliPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = Path.GetDirectoryName(_cliPath)!
+            };
+
+            psi.ArgumentList.Add("--output");
+            psi.ArgumentList.Add("json");
+            psi.ArgumentList.Add("-p");
+            psi.ArgumentList.Add(_rpcPortal);
+            psi.ArgumentList.Add("whitelist");
+            psi.ArgumentList.Add("set-udp");
+            psi.ArgumentList.Add(string.Join(",", ports));
+
+            using var proc = new Process { StartInfo = psi };
+            try
+            {
+                proc.Start();
+                var stdout = await proc.StandardOutput.ReadToEndAsync(ct);
+                var stderr = await proc.StandardError.ReadToEndAsync(ct);
+                await proc.WaitForExitAsync(ct);
+
+                if (proc.ExitCode != 0)
+                {
+                    _logger.LogWarning("Set UDP whitelist failed. Error: {Error}", stderr);
+                    return false;
+                }
+
+                _logger.LogInformation("UDP whitelist set: {Ports}", string.Join(",", ports));
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to set UDP whitelist");
+                return false;
+            }
+        }
+
         public async Task<JsonDocument?> RunAsync(IEnumerable<string> subArgs, CancellationToken ct = default)
         {
             if (!File.Exists(_cliPath))

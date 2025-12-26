@@ -75,63 +75,23 @@ public sealed partial class RoomController
         {
             // Already started, check if ready
             var cliService = _serviceProvider.GetRequiredService<EasyTierCliService>();
-            Console.WriteLine("[1] Fetching node info from EasyTier CLI...");
             _logger.LogInformation("Fetching node info from EasyTier CLI...");
             var node = await cliService.NodeAsync(ct);
-            Console.WriteLine("[2] NodeAsync returned, node={0}", node != null ? "not null" : "null");
             if (node != null)
             {
-                Console.WriteLine("[3] Inside if (node != null) block");
                 _logger.LogInformation("EasyTier is ready");
-                Console.WriteLine("[4] About to call PeersAsync...");
-                _logger.LogInformation("About to call PeersAsync...");
 
-                // Wait for connection to public server (at least one peer connected)
-                Console.WriteLine("[5] Before PeersAsync call");
-                var peers = await cliService.PeersAsync(ct);
-                Console.WriteLine("[6] After PeersAsync call, peers={0}", peers != null ? "not null" : "null");
-                _logger.LogInformation("Peers result: {PeersResult}", peers != null ? "got data" : "null");
-                _logger.LogInformation("Waiting for P2P network connection...");
-                int retryCount = 0;
-                const int maxRetries = 30; // 30 seconds total timeout
-
-                while (peers == null || peers.RootElement.GetArrayLength() == 0)
+                // Get local node's virtual IP for logging
+                string? localVirtualIp = null;
+                if (node.RootElement.TryGetProperty("ipv4_addr", out var ipv4Prop))
                 {
-                    if (retryCount >= maxRetries)
+                    var ipv4Addr = ipv4Prop.GetString();
+                    // ipv4_addr format is "10.144.144.1/24", extract just the IP
+                    if (!string.IsNullOrEmpty(ipv4Addr))
                     {
-                        _logger.LogWarning("No peers connected after {Seconds}s, continuing anyway...", maxRetries);
-                        break;
+                        var slashIndex = ipv4Addr.IndexOf('/');
+                        localVirtualIp = slashIndex > 0 ? ipv4Addr[..slashIndex] : ipv4Addr;
                     }
-
-                    await Task.Delay(TimeSpan.FromSeconds(1), ct);
-                    peers = await cliService.PeersAsync(ct);
-                    retryCount++;
-
-                    if (retryCount % 5 == 0)
-                    {
-                        _logger.LogInformation("Still waiting for peers... ({Count}s)", retryCount);
-                    }
-                }
-
-                if (peers != null && peers.RootElement.GetArrayLength() > 0)
-                {
-                    _logger.LogInformation("Connected to {Count} peer(s)", peers.RootElement.GetArrayLength());
-                }
-                else
-                {
-                    _logger.LogInformation("No peers detected (Host only)");
-                }
-
-                // Add port forwarding for Scaffolding server
-                // This allows virtual network peers to access the Scaffolding server
-                _logger.LogInformation("Setting up port forwarding for Scaffolding server...");
-                var localAddr = $"0.0.0.0:{_runtime.ScaffoldingPort}";
-                var virtualAddr = $"10.144.144.1:{_runtime.ScaffoldingPort}";
-                var forwardOk = await cliService.AddPortForwardAsync("tcp", localAddr, virtualAddr, ct);
-
-                if (!forwardOk)
-                {
-                    _logger.LogWarning("Failed to add port forwarding, Scaffolding server may not be accessible from virtual network");
                 }
 
                 // Log virtual network information for debugging
@@ -140,40 +100,18 @@ public sealed partial class RoomController
                 _logger.LogInformation("Network Secret: {NetworkSecret}", _runtime.NetworkSecret);
                 _logger.LogInformation("Center Hostname: {Hostname}", ScaffoldingHelpers.GenerateCenterHostname(_runtime.ScaffoldingPort));
                 _logger.LogInformation("Scaffolding Port: {Port}", _runtime.ScaffoldingPort);
-                _logger.LogInformation("Virtual IP: 10.144.144.1");
+                if (!string.IsNullOrEmpty(localVirtualIp))
+                {
+                    _logger.LogInformation("Virtual IP: {VirtualIp}", localVirtualIp);
+                }
                 _logger.LogInformation("Public Servers: tcp://public.easytier.top:11010, tcp://public2.easytier.cn:54321");
 
                 // Log local node information
-                if (node != null)
-                {
-                    var hasHostname = node.RootElement.TryGetProperty("hostname", out var hostnameProp);
-                    var hasIpv4 = node.RootElement.TryGetProperty("ipv4", out var ipv4Prop);
-                    var hasId = node.RootElement.TryGetProperty("id", out var idProp);
-                    _logger.LogInformation("Local Node: Hostname={Hostname}, IP={IP}, ID={ID}",
-                        hasHostname ? hostnameProp.GetString() : "N/A",
-                        hasIpv4 ? ipv4Prop.GetString() : "N/A",
-                        hasId ? idProp.GetString() : "N/A");
-                }
-
-                // Log connected peers
-                if (peers != null && peers.RootElement.GetArrayLength() > 0)
-                {
-                    _logger.LogInformation("Connected Peers ({Count}):", peers.RootElement.GetArrayLength());
-                    foreach (var peer in peers.RootElement.EnumerateArray())
-                    {
-                        var hasHostname = peer.TryGetProperty("hostname", out var peerHostname);
-                        var hasIp = peer.TryGetProperty("ipv4", out var peerIp);
-                        var hasId = peer.TryGetProperty("id", out var peerId);
-                        _logger.LogInformation("  - Hostname={Hostname}, IP={IP}, ID={ID}",
-                            hasHostname ? peerHostname.GetString() : "N/A",
-                            hasIp ? peerIp.GetString() : "N/A",
-                            hasId ? peerId.GetString() : "N/A");
-                    }
-                }
-                else
-                {
-                    _logger.LogWarning("No peers connected yet - this may cause connection issues");
-                }
+                var hasHostname = node.RootElement.TryGetProperty("hostname", out var hostnameProp);
+                var hasId = node.RootElement.TryGetProperty("id", out var idProp);
+                _logger.LogInformation("Local Node: Hostname={Hostname}, ID={ID}",
+                    hasHostname ? hostnameProp.GetString() : "N/A",
+                    hasId ? idProp.GetString() : "N/A");
 
                 _logger.LogInformation("====================================");
 
@@ -223,10 +161,9 @@ public sealed partial class RoomController
             // Listeners - bind to specific interface to avoid Mihomo proxy
             "-l", "udp://0.0.0.0:0",
             "-l", "tcp://0.0.0.0:0",
-            // Port whitelist
+            // Port whitelist - only Scaffolding port initially
+            // MC port will be added dynamically after detection
             "--tcp-whitelist", _runtime.ScaffoldingPort.ToString(),
-            "--tcp-whitelist", "25565",
-            "--udp-whitelist", "25565",
             // Public servers (use -p like Terracotta)
             "-p", tcpPublicServers[0],
             "-p", tcpPublicServers[1]
@@ -293,6 +230,41 @@ public sealed partial class RoomController
             if (node != null)
             {
                 _logger.LogInformation("EasyTier is ready");
+
+                // Get local node's virtual IP for logging
+                string? localVirtualIp = null;
+                if (node.RootElement.TryGetProperty("ipv4_addr", out var ipv4Prop))
+                {
+                    var ipv4Addr = ipv4Prop.GetString();
+                    // ipv4_addr format is "10.144.144.1/24", extract just the IP
+                    if (!string.IsNullOrEmpty(ipv4Addr))
+                    {
+                        var slashIndex = ipv4Addr.IndexOf('/');
+                        localVirtualIp = slashIndex > 0 ? ipv4Addr[..slashIndex] : ipv4Addr;
+                    }
+                }
+
+                // Log virtual network information for debugging
+                _logger.LogInformation("=== Virtual Network Information ===");
+                _logger.LogInformation("Network Name: {NetworkName}", _runtime.NetworkName);
+                _logger.LogInformation("Network Secret: {NetworkSecret}", _runtime.NetworkSecret);
+                _logger.LogInformation("Center Hostname: {Hostname}", ScaffoldingHelpers.GenerateCenterHostname(_runtime.ScaffoldingPort));
+                _logger.LogInformation("Scaffolding Port: {Port}", _runtime.ScaffoldingPort);
+                if (!string.IsNullOrEmpty(localVirtualIp))
+                {
+                    _logger.LogInformation("Virtual IP: {VirtualIp}", localVirtualIp);
+                }
+                _logger.LogInformation("Public Servers: tcp://public.easytier.top:11010, tcp://public2.easytier.cn:54321");
+
+                // Log local node information
+                var hasHostname = node.RootElement.TryGetProperty("hostname", out var hostnameProp);
+                var hasId = node.RootElement.TryGetProperty("id", out var idProp);
+                _logger.LogInformation("Local Node: Hostname={Hostname}, ID={ID}",
+                    hasHostname ? hostnameProp.GetString() : "N/A",
+                    hasId ? idProp.GetString() : "N/A");
+
+                _logger.LogInformation("====================================");
+
                 _state = RoomStateKind.Host_MinecraftDetecting;
                 EmitStatus();
                 return;
@@ -332,6 +304,20 @@ public sealed partial class RoomController
             _runtime.ScaffoldingServer!.SetMinecraftPort(_runtime.MinecraftPort);
             _logger.LogInformation("Minecraft server detected on port {Port} from {EndPoint}",
                 _runtime.MinecraftPort, localServer.EndPoint);
+
+            // Update EasyTier whitelist to allow the MC port
+            var cliService = _serviceProvider.GetRequiredService<EasyTierCliService>();
+            var mcPortStr = _runtime.MinecraftPort.ToString()!;
+            var tcpWhitelist = new string[] { _runtime.ScaffoldingPort.ToString()!, mcPortStr };
+            var udpWhitelist = new string[] { mcPortStr };
+
+            var tcpWhitelistLog = string.Join(",", tcpWhitelist);
+            var udpWhitelistLog = string.Join(",", udpWhitelist);
+            _logger.LogInformation("Setting EasyTier whitelist - TCP: {Tcp}, UDP: {Udp}",
+                tcpWhitelistLog, udpWhitelistLog);
+
+            await cliService.SetTcpWhitelistAsync(tcpWhitelist, ct);
+            await cliService.SetUdpWhitelistAsync(udpWhitelist, ct);
         }
         else
         {
@@ -344,6 +330,9 @@ public sealed partial class RoomController
         EmitStatus();
     }
 
+    private int _mcFailureCount = 0;
+    private const int MC_MAX_FAILURES = 3;
+
     private async Task StepHost_RunningAsync(CancellationToken ct)
     {
         // Monitor EasyTier process
@@ -355,7 +344,38 @@ public sealed partial class RoomController
             return;
         }
 
-        // Check for MC server changes
+        // MC server TCP connection check (like Terracotta does)
+        var mcPort = _runtime.MinecraftPort;
+        if (mcPort.HasValue)
+        {
+            var isMcAlive = await CheckMcServerConnectionAsync(mcPort.Value, ct);
+            if (isMcAlive)
+            {
+                if (_mcFailureCount > 0)
+                {
+                    _logger.LogInformation("MC server connection restored");
+                }
+                _mcFailureCount = 0;
+            }
+            else
+            {
+                _mcFailureCount++;
+                _logger.LogWarning("MC server check failed ({Count}/{Max})",
+                    _mcFailureCount, MC_MAX_FAILURES);
+
+                if (_mcFailureCount >= MC_MAX_FAILURES)
+                {
+                    _lastError = "Minecraft server connection lost";
+                    _logger.LogError("Minecraft server connection lost after {Count} failures",
+                        _mcFailureCount);
+                    _state = RoomStateKind.Error;
+                    EmitStatus();
+                    return;
+                }
+            }
+        }
+
+        // Check for MC server changes (LAN broadcast discovery)
         var mcState = _serviceProvider.GetRequiredService<MinecraftLanState>();
         var localServer = mcState.AllServers.FirstOrDefault(s => s.IsLocalNetwork);
         var newPort = localServer != null ? (ushort?)localServer.EndPoint.Port : null;
@@ -369,16 +389,79 @@ public sealed partial class RoomController
             {
                 _logger.LogInformation("Minecraft port updated to {Port} from {EndPoint}",
                     _runtime.MinecraftPort.Value, localServer!.EndPoint);
+
+                // Update EasyTier whitelist to allow the new MC port
+                var cliService = _serviceProvider.GetRequiredService<EasyTierCliService>();
+                var mcPortStr = newPort.Value.ToString()!;
+                var tcpWhitelist = new string[] { _runtime.ScaffoldingPort.ToString()!, mcPortStr };
+                var udpWhitelist = new string[] { mcPortStr };
+
+                var tcpWhitelistLog = string.Join(",", tcpWhitelist);
+                var udpWhitelistLog = string.Join(",", udpWhitelist);
+                _logger.LogInformation("Updating EasyTier whitelist - TCP: {Tcp}, UDP: {Udp}",
+                    tcpWhitelistLog, udpWhitelistLog);
+
+                await cliService.SetTcpWhitelistAsync(tcpWhitelist, ct);
+                await cliService.SetUdpWhitelistAsync(udpWhitelist, ct);
+
+                // Reset failure count when port changes
+                _mcFailureCount = 0;
             }
             else
             {
                 _logger.LogWarning("Minecraft server disappeared - c:server_port will return status=32");
+
+                // Remove MC port from EasyTier whitelist (keep only Scaffolding port)
+                var cliService = _serviceProvider.GetRequiredService<EasyTierCliService>();
+                var tcpWhitelist = new string[] { _runtime.ScaffoldingPort.ToString()! };
+
+                _logger.LogInformation("Removing MC port from whitelist - TCP: {Tcp}, UDP: (empty)",
+                    string.Join(",", tcpWhitelist));
+
+                await cliService.SetTcpWhitelistAsync(tcpWhitelist, ct);
+                await cliService.SetUdpWhitelistAsync([], ct);
             }
 
             EmitStatus();
         }
 
         await Task.Delay(TimeSpan.FromSeconds(5), ct);
+    }
+
+    /// <summary>
+    /// Check MC server connection using TCP handshake (like Terracotta's check_mc_conn).
+    /// Sends MC handshake packet (0xFE) and expects 0xFF response.
+    /// </summary>
+    private static async Task<bool> CheckMcServerConnectionAsync(ushort port, CancellationToken ct)
+    {
+        try
+        {
+            using var socket = new System.Net.Sockets.Socket(
+                System.Net.Sockets.AddressFamily.InterNetwork,
+                System.Net.Sockets.SocketType.Stream,
+                System.Net.Sockets.ProtocolType.Tcp);
+
+            // Connect with timeout
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(5));
+
+            await socket.ConnectAsync("127.0.0.1", port, cts.Token);
+
+            // Send MC legacy handshake packet (0xFE)
+            var handshake = new byte[] { 0xFE };
+            await socket.SendAsync(handshake, System.Net.Sockets.SocketFlags.None, cts.Token);
+
+            // Receive response
+            var response = new byte[1];
+            var received = await socket.ReceiveAsync(response, System.Net.Sockets.SocketFlags.None, cts.Token);
+
+            // MC server should respond with 0xFF
+            return received == 1 && response[0] == 0xFF;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>

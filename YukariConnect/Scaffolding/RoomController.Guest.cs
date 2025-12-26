@@ -221,64 +221,10 @@ public sealed partial class RoomController
         _runtime.CenterScaffoldingPort = center.Port;
         _logger.LogInformation("Center found: {Host} at {Ip}:{Port}", center.Hostname, center.Ip, center.Port);
 
-        // Wait for P2P connection to establish (check if tx_bytes > 0)
-        _logger.LogInformation("Waiting for P2P connection to center...");
-        int connectionCheckCount = 0;
-        const int maxConnectionChecks = 30; // 30 seconds
-        bool connectionEstablished = false;
-
-        while (connectionCheckCount < maxConnectionChecks)
-        {
-            await Task.Delay(TimeSpan.FromSeconds(1), ct);
-
-            // Check peers again to see if connection is established
-            var peersCheck = await cliService.PeersAsync(ct);
-            if (peersCheck != null)
-            {
-                foreach (var peer in peersCheck.RootElement.EnumerateArray())
-                {
-                    var hostname = peer.GetProperty("hostname").GetString();
-                    if (hostname == center.Hostname)
-                    {
-                        var hasTxBytes = peer.TryGetProperty("tx_bytes", out var txBytesProp);
-                        var hasRxBytes = peer.TryGetProperty("rx_bytes", out var rxBytesProp);
-
-                        if (hasTxBytes && hasRxBytes)
-                        {
-                            var txBytesStr = txBytesProp.GetString();
-                            var rxBytesStr = rxBytesProp.GetString();
-
-                            // Check if there's any data transfer (not "0 B")
-                            if (txBytesStr != "0 B" || rxBytesStr != "0 B")
-                            {
-                                _logger.LogInformation("P2P connection established: tx={Tx}, rx={Rx}",
-                                    txBytesStr, rxBytesStr);
-                                connectionEstablished = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (connectionEstablished)
-                break;
-
-            connectionCheckCount++;
-            if (connectionCheckCount % 5 == 0)
-            {
-                _logger.LogInformation("Still waiting for P2P connection... ({Count}s)", connectionCheckCount);
-            }
-        }
-
-        if (!connectionEstablished)
-        {
-            _logger.LogWarning("P2P connection not established after {Seconds}s, trying anyway...", maxConnectionChecks);
-        }
-
-        // Set up port forwarding for Scaffolding client (like Terracotta does)
+        // IMPORTANT: Guest MUST use port forwarding because the OS doesn't know how to route to virtual IP
+        // EasyTier will handle the routing internally via port-forwarding
         // Forward local port to remote center's Scaffolding server
-        ushort localForwardPort = _runtime.CenterScaffoldingPort.Value; // Use same port locally
+        ushort localForwardPort = _runtime.CenterScaffoldingPort.Value;
         var localAddr = $"0.0.0.0:{localForwardPort}";
         var remoteAddr = $"{center.Ip}:{center.Port}";
 
