@@ -46,6 +46,7 @@ public static class RoomEndpoint
         roomApi.MapPost("/host/start", StartHost);
         roomApi.MapPost("/guest/start", StartGuest);
         roomApi.MapPost("/stop", StopRoom);
+        roomApi.MapPost("/retry", RetryRoom);
     }
 
     static IResult GetRoomStatus(RoomController controller)
@@ -109,6 +110,19 @@ public static class RoomEndpoint
         {
             await controller.StopAsync();
             return TypedResults.Ok(new MessageResponse("Room stopped"));
+        }
+        catch (Exception ex)
+        {
+            return TypedResults.BadRequest(new RoomErrorResponse(ex.Message));
+        }
+    }
+
+    static async Task<IResult> RetryRoom(RoomController controller)
+    {
+        try
+        {
+            await controller.RetryAsync();
+            return TypedResults.Ok(new MessageResponse("Retrying from error state..."));
         }
         catch (Exception ex)
         {

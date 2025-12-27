@@ -174,13 +174,27 @@ public sealed partial class ScaffoldingClient : IAsyncDisposable
 
     /// <summary>
     /// Verify server connectivity using c:ping.
-    /// Server should echo back the request body.
+    /// Sends fingerprint and verifies server echoes it back.
     /// </summary>
     public async Task<bool> PingAsync(CancellationToken ct = default)
     {
-        // Send empty body, server should echo back
-        var response = await SendRequestAsync("c:ping", Array.Empty<byte>(), ct);
-        return response.IsSuccess;
+        // Send fingerprint, server should echo it back
+        var response = await SendRequestAsync("c:ping", Models.ScaffoldingFingerprint.Value, ct);
+
+        if (!response.IsSuccess)
+            return false;
+
+        // Verify echoed fingerprint matches
+        if (response.Data.Length != Models.ScaffoldingFingerprint.Value.Length)
+            return false;
+
+        for (int i = 0; i < Models.ScaffoldingFingerprint.Value.Length; i++)
+        {
+            if (response.Data[i] != Models.ScaffoldingFingerprint.Value[i])
+                return false;
+        }
+
+        return true;
     }
 
     /// <summary>

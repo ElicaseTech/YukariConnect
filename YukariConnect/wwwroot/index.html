@@ -117,12 +117,16 @@
             background: #0f3460;
             padding: 12px;
             border-radius: 8px;
+        }
+        .player-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            margin-bottom: 8px;
         }
         .player-name {
             font-weight: bold;
+            color: #00d4ff;
         }
         .player-kind {
             background: #667eea;
@@ -133,6 +137,23 @@
         .player-kind.host {
             background: #00ff88;
             color: #1a1a2e;
+        }
+        .player-kind.guest {
+            background: #667eea;
+        }
+        .player-details {
+            font-size: 12px;
+            color: #888;
+            display: grid;
+            gap: 4px;
+        }
+        .player-detail {
+            display: flex;
+            gap: 8px;
+        }
+        .player-label {
+            color: #666;
+            min-width: 80px;
         }
         .log-container {
             background: #0a0a0a;
@@ -164,6 +185,12 @@
             border-radius: 8px;
             letter-spacing: 2px;
             user-select: all;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .room-code:hover {
+            background: #0f3460;
+            transform: scale(1.02);
         }
         .room-code-container {
             text-align: center;
@@ -171,6 +198,25 @@
         .room-code-label {
             color: #888;
             margin-bottom: 10px;
+        }
+        .copy-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-top: 10px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .copy-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 3px 10px rgba(102,126,234,0.4);
+        }
+        .copy-btn.copied {
+            background: linear-gradient(135deg, #00ff88 0%, #00cc6a 100%);
+            color: #1a1a2e;
         }
         .hidden { display: none; }
         @keyframes pulse {
@@ -212,7 +258,8 @@
         <!-- Room Code (Host only) -->
         <div class="card room-code-container hidden" id="roomCodeCard">
             <div class="room-code-label">房间码 (分享给好友)</div>
-            <div class="room-code" id="roomCode">-</div>
+            <div class="room-code" id="roomCode" onclick="copyRoomCode()">-</div>
+            <button class="copy-btn" id="copyBtn" onclick="copyRoomCode()">复制房间码</button>
         </div>
 
         <!-- Host Controls -->
@@ -225,6 +272,7 @@
             <div class="btn-group">
                 <button class="btn" id="btnStartHost" onclick="startHost()">创建房间</button>
                 <button class="btn btn-danger" id="btnStopHost" onclick="stopRoom()" disabled>停止房间</button>
+                <button class="btn hidden" id="btnRecover" onclick="recoverFromError()" style="background: linear-gradient(135deg, #00ff88 0%, #00cc6a 100%);">恢复</button>
             </div>
         </div>
 
@@ -233,7 +281,10 @@
             <h2>🎮 加入房间 (Guest)</h2>
             <div class="form-group">
                 <label>房间码</label>
-                <input type="text" id="guestRoomCode" placeholder="U/AB12-CD34-EF56-GH78">
+                <div style="display: flex; gap: 10px;">
+                    <input type="text" id="guestRoomCode" placeholder="U/AB12-CD34-EF56-GH78">
+                    <button class="btn" onclick="pasteRoomCode()" style="flex: 0 0 auto;">粘贴</button>
+                </div>
             </div>
             <div class="form-group">
                 <label>玩家名称</label>
@@ -265,6 +316,19 @@
         const API_BASE = '';
         let statusInterval = null;
         let lastState = null;
+        let lastPlayersHash = null;
+
+        // Simple hash function for player list comparison
+        function hashPlayers(players) {
+            if (!players || players.length === 0) return 'empty';
+            return JSON.stringify(players.map(p => ({
+                name: p.name,
+                machine_id: p.machine_id,
+                vendor: p.vendor,
+                kind: p.kind?.Value || p.kind,
+                easytier_id: p.easytier_id
+            })));
+        }
 
         // Start Host
         async function startHost() {
@@ -322,6 +386,44 @@
             }
         }
 
+        // Copy room code to clipboard
+        async function copyRoomCode() {
+            const roomCode = document.getElementById('roomCode').textContent.trim();
+            if (!roomCode || roomCode === '-') {
+                addLog('warn', '没有可复制的房间码');
+                return;
+            }
+
+            try {
+                await navigator.clipboard.writeText(roomCode);
+                addLog('info', '房间码已复制到粘贴板');
+
+                // Update button to show copied state
+                const copyBtn = document.getElementById('copyBtn');
+                const originalText = copyBtn.textContent;
+                copyBtn.textContent = '已复制!';
+                copyBtn.classList.add('copied');
+
+                setTimeout(() => {
+                    copyBtn.textContent = originalText;
+                    copyBtn.classList.remove('copied');
+                }, 2000);
+            } catch (e) {
+                addLog('error', '复制失败: ' + e.message);
+            }
+        }
+
+        // Paste room code from clipboard
+        async function pasteRoomCode() {
+            try {
+                const text = await navigator.clipboard.readText();
+                document.getElementById('guestRoomCode').value = text.trim();
+                addLog('info', '已从粘贴板粘贴房间码');
+            } catch (e) {
+                addLog('warn', '无法读取粘贴板: ' + e.message);
+            }
+        }
+
         // Stop Room
         async function stopRoom() {
             try {
@@ -342,6 +444,27 @@
             }
         }
 
+        // Recover from Error state
+        async function recoverFromError() {
+            try {
+                addLog('info', '正在从错误状态恢复...');
+
+                const response = await fetch(`${API_BASE}/room/retry`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    addLog('info', '正在重新连接...');
+                    startPolling();
+                } else {
+                    const error = await response.json();
+                    addLog('error', error.error || '恢复失败');
+                }
+            } catch (e) {
+                addLog('error', '网络错误: ' + e.message);
+            }
+        }
+
         // Update Status
         async function updateStatus() {
             try {
@@ -351,10 +474,8 @@
                 updateUI(data);
                 lastState = data;
 
-                // Auto-stop polling if idle
-                if (data.state === 'Idle' || data.state === 'Error') {
-                    stopPolling();
-                }
+                // Keep polling forever - don't auto-stop
+                // This ensures UI always shows current state
             } catch (e) {
                 console.error('Failed to fetch status:', e);
             }
@@ -362,46 +483,118 @@
 
         // Update UI
         function updateUI(data) {
-            document.getElementById('state').textContent = data.state;
-            document.getElementById('role').textContent = data.role || '-';
-            document.getElementById('mcPort').textContent = data.minecraftPort || '-';
-            document.getElementById('playerCount').textContent = data.players?.length || 0;
-
-            // Room code
-            const roomCodeCard = document.getElementById('roomCodeCard');
-            if (data.roomCode && data.role === 'HostCenter') {
-                roomCodeCard.classList.remove('hidden');
-                document.getElementById('roomCode').textContent = data.roomCode;
-            } else {
-                roomCodeCard.classList.add('hidden');
-            }
-
-            // Players
-            const playerList = document.getElementById('playerList');
-            if (data.players && data.players.length > 0) {
-                playerList.innerHTML = data.players.map(p => `
-                    <div class="player-item">
-                        <span class="player-name">${escapeHtml(p.name)}</span>
-                        <span class="player-kind ${p.kind === 'Host' ? 'host' : ''}">${p.kind}</span>
-                    </div>
-                `).join('');
-            } else {
-                playerList.innerHTML = '<div style="color: #888; text-align: center; padding: 20px;">暂无玩家</div>';
-            }
-
-            // Buttons
-            const isRunning = data.state && data.state !== 'Idle' && data.state !== 'Error';
-            document.getElementById('btnStartHost').disabled = isRunning;
-            document.getElementById('btnJoinRoom').disabled = isRunning;
-            document.getElementById('btnStopHost').disabled = !isRunning;
-
-            // State color
+            // State - only update if changed
             const stateEl = document.getElementById('state');
-            stateEl.className = 'value';
-            if (data.state === 'Error') {
-                stateEl.classList.add('error');
-            } else if (data.state !== 'Idle') {
-                stateEl.classList.add('state');
+            if (stateEl.textContent !== data.state) {
+                stateEl.textContent = data.state;
+                stateEl.className = 'value';
+                if (data.state === 'Error') {
+                    stateEl.classList.add('error');
+                } else if (data.state !== 'Idle') {
+                    stateEl.classList.add('state');
+                }
+            }
+
+            // Role - only update if changed
+            const roleEl = document.getElementById('role');
+            const roleText = data.role || '-';
+            if (roleEl.textContent !== roleText) {
+                roleEl.textContent = roleText;
+            }
+
+            // MC Port - only update if changed
+            const mcPortEl = document.getElementById('mcPort');
+            const mcPortText = data.minecraftPort || '-';
+            if (mcPortEl.textContent !== mcPortText) {
+                mcPortEl.textContent = mcPortText;
+            }
+
+            // Player Count - only update if changed
+            const playerCountEl = document.getElementById('playerCount');
+            const playerCount = data.players?.length || 0;
+            if (playerCountEl.textContent !== String(playerCount)) {
+                playerCountEl.textContent = playerCount;
+            }
+
+            // Room code - only update if changed
+            const roomCodeCard = document.getElementById('roomCodeCard');
+            const roomCodeEl = document.getElementById('roomCode');
+            const shouldShowRoomCode = data.roomCode && data.role === 'HostCenter';
+            const currentRoomCode = roomCodeEl.textContent;
+
+            if (shouldShowRoomCode) {
+                if (currentRoomCode !== data.roomCode) {
+                    roomCodeCard.classList.remove('hidden');
+                    roomCodeEl.textContent = data.roomCode;
+                }
+            } else {
+                if (!roomCodeCard.classList.contains('hidden')) {
+                    roomCodeCard.classList.add('hidden');
+                }
+            }
+
+            // Players - only update if list changed
+            const playerList = document.getElementById('playerList');
+            const playersHash = hashPlayers(data.players);
+
+            if (lastPlayersHash !== playersHash) {
+                lastPlayersHash = playersHash;
+
+                if (data.players && data.players.length > 0) {
+                    playerList.innerHTML = data.players.map(p => {
+                        const kindValue = p.kind?.Value || p.kind || 'UNKNOWN';
+                        const kindClass = kindValue === 'HOST' ? 'host' : (kindValue === 'GUEST' ? 'guest' : '');
+                        return `
+                            <div class="player-item">
+                                <div class="player-header">
+                                    <span class="player-name">${escapeHtml(p.name || 'Unknown')}</span>
+                                    <span class="player-kind ${kindClass}">${kindValue}</span>
+                                </div>
+                                <div class="player-details">
+                                    <div class="player-detail">
+                                        <span class="player-label">Machine ID:</span>
+                                        <span style="font-family: monospace; font-size: 11px;">${escapeHtml(p.machine_id || '-')}</span>
+                                    </div>
+                                    <div class="player-detail">
+                                        <span class="player-label">Vendor:</span>
+                                        <span>${escapeHtml(p.vendor || '-')}</span>
+                                    </div>
+                                    ${p.easytier_id ? `
+                                    <div class="player-detail">
+                                        <span class="player-label">EasyTier ID:</span>
+                                        <span style="font-family: monospace; font-size: 11px;">${escapeHtml(p.easytier_id)}</span>
+                                    </div>
+                                    ` : ''}
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+                } else {
+                    playerList.innerHTML = '<div style="color: #888; text-align: center; padding: 20px;">暂无玩家</div>';
+                }
+            }
+
+            // Buttons - only update if changed
+            const isRunning = data.state && data.state !== 'Idle' && data.state !== 'Error';
+            const isError = data.state === 'Error';
+            const btnStartHost = document.getElementById('btnStartHost');
+            const btnJoinRoom = document.getElementById('btnJoinRoom');
+            const btnStopHost = document.getElementById('btnStopHost');
+            const btnRecover = document.getElementById('btnRecover');
+
+            if (btnStartHost.disabled !== isRunning) btnStartHost.disabled = isRunning;
+            if (btnJoinRoom.disabled !== isRunning) btnJoinRoom.disabled = isRunning;
+            if (btnStopHost.disabled !== !isRunning) btnStopHost.disabled = !isRunning;
+
+            // Show recover button only in Error state
+            if (isError) {
+                if (btnRecover.classList.contains('hidden')) {
+                    btnRecover.classList.remove('hidden');
+                }
+            } else {
+                if (!btnRecover.classList.contains('hidden')) {
+                    btnRecover.classList.add('hidden');
+                }
             }
         }
 
@@ -440,8 +633,8 @@
             return div.innerHTML;
         }
 
-        // Initial load
-        updateStatus();
+        // Initial load - start polling immediately
+        startPolling();
     </script>
 </body>
 </html>

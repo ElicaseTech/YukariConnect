@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using YukariConnect.Scaffolding.Models;
 using YukariConnect.Services;
 using YukariConnect.Minecraft.Services;
+using YukariConnect.Network;
 
 namespace YukariConnect.Scaffolding;
 
@@ -15,6 +16,32 @@ public sealed partial class RoomController
 {
     private async Task StepGuestAsync(CancellationToken ct)
     {
+        // Handle terminal states
+        if (_state == RoomStateKind.Idle ||
+            _state == RoomStateKind.Stopping)
+        {
+            return;
+        }
+
+        // Clean up resources in Error state
+        if (_state == RoomStateKind.Error)
+        {
+            if (_runtime?.ScaffoldingClient != null)
+            {
+                try
+                {
+                    await _runtime.ScaffoldingClient.DisposeAsync();
+                    _runtime.ScaffoldingClient = null;
+                    _logger.LogInformation("ScaffoldingClient disposed in Error state");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to dispose ScaffoldingClient in Error state");
+                }
+            }
+            return;
+        }
+
         if (_state == RoomStateKind.Guest_Prepare)
             await StepGuest_PrepareAsync(ct);
         else if (_state == RoomStateKind.Guest_EasyTierStarting)
@@ -39,95 +66,48 @@ public sealed partial class RoomController
     {
         if (_runtime!.EasyTierProcess != null)
         {
-            var cliService = _serviceProvider.GetRequiredService<EasyTierCliService>();
-            var node = await cliService.NodeAsync(ct);
+            var node = await _networkNode.GetNodeInfoAsync(ct);
             if (node != null)
             {
-                _logger.LogInformation("EasyTier is ready");
+                _logger.LogInformation("Network layer is ready");
                 _state = RoomStateKind.Guest_DiscoveringCenter;
                 EmitStatus();
                 return;
             }
         }
 
-        var env = _serviceProvider.GetRequiredService<IHostEnvironment>();
-        var publicServers = _serviceProvider.GetRequiredService<PublicServersService>();
-        var resourceDir = Path.Combine(env.ContentRootPath, "resource");
-        var coreExe = Path.Combine(resourceDir, OperatingSystem.IsWindows() ? "easytier-core.exe" : "easytier-core");
-
-        if (!File.Exists(coreExe))
+        // Get and validate public servers from peer discovery service
+        _logger.LogInformation("Validating public servers...");
+        var publicServers = await _peerDiscovery.GetValidatedPublicServersAsync(ct);
+        if (publicServers.Length == 0)
         {
-            _lastError = "EasyTier core not found";
+            _lastError = "No valid public servers available";
             _state = RoomStateKind.Error;
             EmitStatus();
             return;
         }
 
-        // Use TCP public servers for Terracotta compatibility
-        // Terracotta uses these specific TCP servers
-        var tcpPublicServers = new[]
+        var config = new NetworkProcessConfig
         {
-            "tcp://public.easytier.top:11010",
-            "tcp://public2.easytier.cn:54321"
+            NetworkName = _runtime.NetworkName,
+            NetworkSecret = _runtime.NetworkSecret,
+            Hostname = "guest",
+            IsHost = false,
+            PublicServers = publicServers
         };
 
-        var args = new List<string>
-        {
-            // Core options
-            "--no-tun",
-            "--dhcp",
-            "--multi-thread",
-            "--latency-first",
-            "--compression", "zstd",
-            "--enable-kcp-proxy",
-            // Network
-            "--network-name", _runtime.NetworkName,
-            "--network-secret", _runtime.NetworkSecret,
-            // Listeners
-            "-l", "udp://0.0.0.0:0",
-            "-l", "tcp://0.0.0.0:0",
-            // Allow all ports
-            "--tcp-whitelist", "0",
-            "--udp-whitelist", "0",
-            // Public servers (TCP for Terracotta compatibility)
-            "--peers", tcpPublicServers[0],
-            "--peers", tcpPublicServers[1]
-        };
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = coreExe,
-            WorkingDirectory = resourceDir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-        foreach (var arg in args)
-            psi.ArgumentList.Add(arg);
-
-        _runtime.EasyTierProcess = Process.Start(psi);
+        _logger.LogInformation("Starting network process...");
+        _runtime.EasyTierProcess = await _networkProcess.StartAsync(config, ct);
 
         if (_runtime.EasyTierProcess == null)
         {
-            _lastError = "Failed to start EasyTier";
+            _lastError = "Failed to start network process";
             _state = RoomStateKind.Error;
             EmitStatus();
             return;
         }
 
-        // Log output
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                while (await _runtime.EasyTierProcess.StandardOutput.ReadLineAsync(ct) is string line)
-                    _logger.LogDebug("EasyTier: {Line}", line);
-            }
-            catch { }
-        });
-
-        _logger.LogInformation("EasyTier started with PID {Pid}", _runtime.EasyTierProcess.Id);
+        _logger.LogInformation("Network process started with PID {Pid}", _runtime.EasyTierProcess.Id);
 
         // Wait for readiness
         var startTime = DateTime.UtcNow;
@@ -135,18 +115,17 @@ public sealed partial class RoomController
         {
             await Task.Delay(TimeSpan.FromSeconds(1), ct);
 
-            var cliService = _serviceProvider.GetRequiredService<EasyTierCliService>();
-            var node = await cliService.NodeAsync(ct);
+            var node = await _networkNode.GetNodeInfoAsync(ct);
             if (node != null)
             {
-                _logger.LogInformation("EasyTier is ready");
+                _logger.LogInformation("Network layer is ready");
                 _state = RoomStateKind.Guest_DiscoveringCenter;
                 EmitStatus();
                 return;
             }
         }
 
-        _lastError = "EasyTier startup timeout";
+        _lastError = "Network startup timeout";
         _state = RoomStateKind.Error;
         EmitStatus();
     }
@@ -166,8 +145,7 @@ public sealed partial class RoomController
             return;
         }
 
-        var cliService = _serviceProvider.GetRequiredService<EasyTierCliService>();
-        var peersDoc = await cliService.PeersAsync(ct);
+        var peersDoc = await _networkNode.GetPeersAsync(ct);
 
         if (peersDoc == null)
         {
@@ -222,14 +200,14 @@ public sealed partial class RoomController
         _logger.LogInformation("Center found: {Host} at {Ip}:{Port}", center.Hostname, center.Ip, center.Port);
 
         // IMPORTANT: Guest MUST use port forwarding because the OS doesn't know how to route to virtual IP
-        // EasyTier will handle the routing internally via port-forwarding
+        // Network layer will handle the routing internally via port-forwarding
         // Forward local port to remote center's Scaffolding server
         ushort localForwardPort = _runtime.CenterScaffoldingPort.Value;
         var localAddr = $"0.0.0.0:{localForwardPort}";
         var remoteAddr = $"{center.Ip}:{center.Port}";
 
         _logger.LogInformation("Setting up port forwarding: {Local} -> {Remote}", localAddr, remoteAddr);
-        var forwardOk = await cliService.AddPortForwardAsync("tcp", localAddr, remoteAddr, ct);
+        var forwardOk = await _networkNode.AddPortForwardAsync("tcp", localAddr, remoteAddr, ct);
 
         if (!forwardOk)
         {
@@ -402,17 +380,15 @@ public sealed partial class RoomController
                     _logger.LogInformation("Setting up Minecraft port forwarding: {Local} -> {Remote}",
                         localMcAddr, remoteMcAddr);
 
-                    var cliService = _serviceProvider.GetRequiredService<EasyTierCliService>();
-
                     // Set up TCP forwarding for Minecraft
-                    var tcpForwardOk = await cliService.AddPortForwardAsync("tcp", localMcAddr, remoteMcAddr, ct);
+                    var tcpForwardOk = await _networkNode.AddPortForwardAsync("tcp", localMcAddr, remoteMcAddr, ct);
                     if (!tcpForwardOk)
                     {
                         _logger.LogWarning("Failed to add TCP port forwarding for Minecraft");
                     }
 
                     // Set up UDP forwarding for Minecraft
-                    var udpForwardOk = await cliService.AddPortForwardAsync("udp", localMcAddr, remoteMcAddr, ct);
+                    var udpForwardOk = await _networkNode.AddPortForwardAsync("udp", localMcAddr, remoteMcAddr, ct);
                     if (!udpForwardOk)
                     {
                         _logger.LogWarning("Failed to add UDP port forwarding for Minecraft");

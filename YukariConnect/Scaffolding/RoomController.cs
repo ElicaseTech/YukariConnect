@@ -4,23 +4,31 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using YukariConnect.Scaffolding.Models;
 using YukariConnect.Services;
+using YukariConnect.Network;
+using YukariConnect.Configuration;
 
 namespace YukariConnect.Scaffolding;
 
 /// <summary>
 /// Room controller with state machine for HostCenter and Guest roles.
-/// Manages EasyTier, Scaffolding server/client, and Minecraft integration.
+/// Manages network layer, Scaffolding server/client, and Minecraft integration.
 /// </summary>
 public sealed partial class RoomController : IAsyncDisposable
 {
     private readonly ILogger<RoomController> _logger;
     private readonly IServiceProvider _serviceProvider;
     private readonly string _machineIdPath;
+    private readonly INetworkNode _networkNode;
+    private readonly IPeerDiscoveryService _peerDiscovery;
+    private readonly INetworkProcess _networkProcess;
+    private readonly YukariOptions _options;
 
     private readonly TimeSpan _tick = TimeSpan.FromMilliseconds(250);
-    private readonly TimeSpan _easyTierStartupTimeout = TimeSpan.FromSeconds(12);
-    private readonly TimeSpan _centerDiscoveryTimeout = TimeSpan.FromSeconds(25);
-    private readonly TimeSpan _scaffoldingConnectTimeout = TimeSpan.FromSeconds(10);
+    private readonly TimeSpan _easyTierStartupTimeout;
+    private readonly TimeSpan _centerDiscoveryTimeout;
+
+    // Configuration
+    private bool _terracottaCompatibilityMode;
 
     // State
     private RoomStateKind _state = RoomStateKind.Idle;
@@ -31,7 +39,6 @@ public sealed partial class RoomController : IAsyncDisposable
 
     // Retry counters (shared across partial classes)
     internal int _scaffoldingConnectRetryCount = 0;
-    internal int _mcFailureCount = 0;
 
     // Events
     public event Action<RoomStatus>? OnStateChanged;
@@ -39,13 +46,29 @@ public sealed partial class RoomController : IAsyncDisposable
     public RoomController(
         IServiceProvider serviceProvider,
         ILogger<RoomController> logger,
+        INetworkNode networkNode,
+        IPeerDiscoveryService peerDiscovery,
+        INetworkProcess networkProcess,
+        YukariOptions options,
         string? machineIdPath = null)
     {
         _serviceProvider = serviceProvider;
         _logger = logger;
+        _networkNode = networkNode;
+        _peerDiscovery = peerDiscovery;
+        _networkProcess = networkProcess;
+        _options = options;
         _machineIdPath = machineIdPath ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "YukariConnect", "machine_id.txt");
+
+        // Apply configuration
+        _terracottaCompatibilityMode = options.TerracottaCompatibilityMode;
+        _easyTierStartupTimeout = TimeSpan.FromSeconds(options.EasyTierStartupTimeoutSeconds);
+        _centerDiscoveryTimeout = TimeSpan.FromSeconds(options.CenterDiscoveryTimeoutSeconds);
+
+        _logger.LogInformation("RoomController initialized with TerracottaCompatibilityMode={Mode}, McServerOfflineThreshold={Threshold}",
+            _terracottaCompatibilityMode, options.McServerOfflineThreshold);
     }
 
     /// <summary>
@@ -59,12 +82,38 @@ public sealed partial class RoomController : IAsyncDisposable
     public string? LastError => _lastError;
 
     /// <summary>
+    /// Gets or sets the Terracotta compatibility mode.
+    /// When true (default): Wait for MC server before starting, like Terracotta.
+    /// When false (Yukari mode): Start immediately and dynamically update MC port.
+    /// </summary>
+    public bool TerracottaCompatibilityMode
+    {
+        get => _terracottaCompatibilityMode;
+        set => _terracottaCompatibilityMode = value;
+    }
+
+    /// <summary>
     /// Current status snapshot.
     /// </summary>
     public RoomStatus GetStatus()
     {
         List<ScaffoldingProfile> players = new();
         ushort? mcPort = null;
+
+        // Don't fetch data in Error state
+        if (_state == RoomStateKind.Error)
+        {
+            return new RoomStatus
+            {
+                State = _state,
+                Role = _runtime?.Role,
+                Error = _lastError,
+                RoomCode = _runtime?.RoomCode,
+                Players = players,
+                MinecraftPort = mcPort,
+                LastUpdate = DateTimeOffset.UtcNow
+            };
+        }
 
         if (_runtime?.Role == RoomRole.HostCenter && _runtime.ScaffoldingServer != null)
         {
@@ -121,9 +170,11 @@ public sealed partial class RoomController : IAsyncDisposable
 
         _logger.LogInformation("Parsed network name: {Network}, secret: {Secret}", networkName, networkSecret);
 
-        // Get ET version for vendor string
-        var etService = _serviceProvider.GetRequiredService<EasyTierCliService>();
-        var etVersion = await etService.GetVersionAsync(ct);
+        // Get network version for vendor string
+        var networkVersion = await _networkNode.GetVersionAsync(ct);
+
+        // Use launcher custom string from parameter if provided, otherwise use config value
+        var effectiveLauncherCustomString = launcherCustomString ?? _options.LauncherCustomString;
 
         _runtime = new RoomRuntime
         {
@@ -134,7 +185,7 @@ public sealed partial class RoomController : IAsyncDisposable
             ScaffoldingPort = scaffoldingPort,
             MachineId = machineId,
             PlayerName = playerName,
-            Vendor = ScaffoldingHelpers.GetVendorString(etVersion, launcherCustomString)
+            Vendor = ScaffoldingHelpers.GetVendorString(networkVersion, effectiveLauncherCustomString)
         };
 
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -163,9 +214,11 @@ public sealed partial class RoomController : IAsyncDisposable
 
         var machineId = ScaffoldingHelpers.LoadOrCreateMachineId(_machineIdPath);
 
-        // Get ET version for vendor string
-        var etService = _serviceProvider.GetRequiredService<EasyTierCliService>();
-        var etVersion = await etService.GetVersionAsync(ct);
+        // Get network version for vendor string
+        var networkVersion = await _networkNode.GetVersionAsync(ct);
+
+        // Use launcher custom string from parameter if provided, otherwise use config value
+        var effectiveLauncherCustomString = launcherCustomString ?? _options.LauncherCustomString;
 
         _runtime = new RoomRuntime
         {
@@ -176,7 +229,7 @@ public sealed partial class RoomController : IAsyncDisposable
             ScaffoldingPort = 13448, // Default, will be discovered
             MachineId = machineId,
             PlayerName = playerName,
-            Vendor = ScaffoldingHelpers.GetVendorString(etVersion, launcherCustomString)
+            Vendor = ScaffoldingHelpers.GetVendorString(networkVersion, effectiveLauncherCustomString)
         };
 
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -217,8 +270,8 @@ public sealed partial class RoomController : IAsyncDisposable
     }
 
     /// <summary>
-    /// Retry from Error state.
-    /// Resets retry counters and transitions back to the appropriate starting state.
+    /// Recover from Error state to Idle.
+    /// Cleans up resources and resets to idle state.
     /// </summary>
     public async Task RetryAsync()
     {
@@ -228,37 +281,21 @@ public sealed partial class RoomController : IAsyncDisposable
             return;
         }
 
-        _logger.LogInformation("Retrying from Error state...");
+        _logger.LogInformation("Recovering from Error state to Idle...");
+
+        // Cleanup and transition to Idle
+        await CleanupAsync();
+
+        _loop = null;
+        _cts = null;
+        _runtime = null;
+        _state = RoomStateKind.Idle;
+        _lastError = null;
 
         // Reset retry counters
         _scaffoldingConnectRetryCount = 0;
-        _mcFailureCount = 0;
 
-        // Determine which state to retry from
-        if (_runtime != null)
-        {
-            if (_runtime.IsHost)
-            {
-                // For host, retry from Host_Running state
-                // The state machine will handle reconnection
-                _logger.LogInformation("Retrying as Host, transitioning to Host_Running");
-                _state = RoomStateKind.Host_Running;
-                _lastError = null;
-                EmitStatus();
-            }
-            else
-            {
-                // For guest, retry from Guest_ConnectingScaffolding state
-                _logger.LogInformation("Retrying as Guest, transitioning to Guest_ConnectingScaffolding");
-                _state = RoomStateKind.Guest_ConnectingScaffolding;
-                _lastError = null;
-                EmitStatus();
-            }
-        }
-        else
-        {
-            _logger.LogWarning("RetryAsync: _runtime is null, cannot determine role");
-        }
+        EmitStatus();
 
         await Task.CompletedTask;
     }
@@ -284,6 +321,10 @@ public sealed partial class RoomController : IAsyncDisposable
             _lastError = e.Message;
             _state = RoomStateKind.Error;
             _logger.LogError(e, "Host loop error");
+
+            // Cleanup resources on error
+            try { await CleanupAsync(); } catch { }
+
             EmitStatus();
         }
     }
@@ -307,6 +348,10 @@ public sealed partial class RoomController : IAsyncDisposable
             _lastError = e.Message;
             _state = RoomStateKind.Error;
             _logger.LogError(e, "Guest loop error");
+
+            // Cleanup resources on error
+            try { await CleanupAsync(); } catch { }
+
             EmitStatus();
         }
     }

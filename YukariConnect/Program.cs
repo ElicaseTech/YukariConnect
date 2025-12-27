@@ -3,6 +3,7 @@ using YukariConnect.Endpoints;
 using YukariConnect.Services;
 using YukariConnect.Minecraft.Services;
 using YukariConnect.Scaffolding;
+using YukariConnect.Configuration;
 
 namespace YukariConnect
 {
@@ -10,6 +11,9 @@ namespace YukariConnect
     {
         public static void Main(string[] args)
         {
+            // Load configuration file (yukari.json)
+            var options = YukariConfiguration.LoadOrCreate();
+
             var builder = WebApplication.CreateSlimBuilder(args);
 
             builder.Services.ConfigureHttpJsonOptions(options =>
@@ -23,18 +27,36 @@ namespace YukariConnect
             // TODO: Swagger with AOT requires additional configuration
             // For now, we rely on the built-in OpenAPI JSON endpoint
 
+            // Register EasyTier infrastructure services
             builder.Services.AddHostedService<EasyTierResourceInitializer>();
             builder.Services.AddSingleton<EasyTierCliService>();
             builder.Services.AddSingleton<PublicServersService>();
+
+            // Register Network abstraction layer
+            builder.Services.AddSingleton<Network.INetworkNode, Network.EasyTierNetworkNode>();
+            builder.Services.AddSingleton<Network.IPeerDiscoveryService, Network.EasyTierPeerDiscoveryService>();
+            builder.Services.AddSingleton<Network.INetworkProcess, Network.EasyTierNetworkProcess>();
 
             // Register Minecraft LAN services
             builder.Services.AddSingleton<MinecraftLanState>();
             builder.Services.AddHostedService<MinecraftLanListener>();
 
+            // Register configuration
+            builder.Services.AddSingleton(options);
+
             // Register Scaffolding services
             builder.Services.AddSingleton<RoomController>();
 
             var app = builder.Build();
+
+            // Initialize ApplicationLogging for static contexts
+            YukariConnect.Network.ApplicationLogging.Configure(app.Services.GetRequiredService<ILoggerFactory>());
+
+            // Find an available port if default is not available
+            EnsureAvailablePort(app, options.HttpPort);
+
+            // Log startup info with port information in machine-readable format
+            LogStartupInfo(app);
 
             // Register shutdown handler to clean up RoomController
             app.Lifetime.ApplicationStopping.Register(() =>
@@ -52,6 +74,7 @@ namespace YukariConnect
             app.Lifetime.ApplicationStopped.Register(() =>
             {
                 Console.WriteLine("[Shutdown] Application stopped");
+                YukariConnect.Network.ChildProcessManager.Cleanup();
             });
 
             if (app.Environment.IsDevelopment())
@@ -78,6 +101,114 @@ namespace YukariConnect
 
             app.Run();
         }
+
+        /// <summary>
+        /// Ensures the application is listening on an available port.
+        /// If the default port is unavailable, finds an available port dynamically.
+        /// </summary>
+        private static void EnsureAvailablePort(WebApplication app, int preferredPort)
+        {
+            var urls = app.Urls.FirstOrDefault();
+            if (string.IsNullOrEmpty(urls))
+            {
+                // No URLs configured, use preferred port from config
+                var port = GetAvailablePort(preferredPort);
+                app.Urls.Clear();
+                app.Urls.Add($"http://localhost:{port}");
+                return;
+            }
+
+            // Check if current URL is accessible
+            if (urls.Contains("://"))
+            {
+                try
+                {
+                    var uri = new Uri(urls.Replace("+", "localhost"));
+                    if (!IsPortAvailable(uri.Port))
+                    {
+                        // Port not available, find a new one
+                        var newPort = GetAvailablePort(uri.Port);
+                        app.Urls.Clear();
+                        app.Urls.Add($"http://localhost:{newPort}");
+                    }
+                }
+                catch
+                {
+                    // Invalid URI, find a new port
+                    var port = GetAvailablePort(preferredPort);
+                    app.Urls.Clear();
+                    app.Urls.Add($"http://localhost:{port}");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets an available port starting from the preferred port.
+        /// </summary>
+        private static int GetAvailablePort(int preferredPort)
+        {
+            const int maxAttempts = 100;
+            for (int i = 0; i < maxAttempts; i++)
+            {
+                int port = preferredPort + i;
+                if (IsPortAvailable(port))
+                    return port;
+            }
+            // If all else fails, use port 0 to let OS assign
+            return 0;
+        }
+
+        /// <summary>
+        /// Checks if a port is available for binding.
+        /// </summary>
+        private static bool IsPortAvailable(int port)
+        {
+            if (port <= 0) return false;
+
+            try
+            {
+                using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, port);
+                listener.Start();
+                listener.Stop();
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Logs startup information with port details in machine-readable format.
+        /// Format: YUKARI_PORT_INFO:port={port}
+        /// </summary>
+        private static void LogStartupInfo(WebApplication app)
+        {
+            // Get the actual listening URLs
+            var urls = app.Urls.FirstOrDefault() ?? "unknown";
+
+            // Try to extract port from URL
+            int port = 0;
+            if (urls.Contains("://"))
+            {
+                var uri = new Uri(urls.Replace("+", "localhost"));
+                port = uri.Port;
+            }
+
+            // Log in machine-readable format using Microsoft.Extensions.Logging
+            var logger = app.Services.GetService<Microsoft.Extensions.Logging.ILogger<Program>>();
+            if (logger != null)
+            {
+                // Machine-readable format for other software to parse
+                // Format: YUKARI_PORT_INFO:port={port}
+                logger.LogInformation("YUKARI_PORT_INFO:port={Port}", port);
+            }
+            else
+            {
+                // Fallback to Console
+                Console.WriteLine($"YUKARI_PORT_INFO:port={port}");
+            }
+        }
     }
 
     [JsonSerializable(typeof(YukariConnect.Endpoints.MetaEndpoint.MetaResponse))]
@@ -97,6 +228,7 @@ namespace YukariConnect
     [JsonSerializable(typeof(YukariConnect.Scaffolding.Models.PlayerPingRequest))]
     [JsonSerializable(typeof(YukariConnect.Scaffolding.Models.ScaffoldingProfile))]
     [JsonSerializable(typeof(List<YukariConnect.Scaffolding.Models.ScaffoldingProfile>))]
+    [JsonSerializable(typeof(YukariConnect.Configuration.YukariOptions))]
     public partial class AppJsonSerializerContext : JsonSerializerContext
     {
     }

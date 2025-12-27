@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using YukariConnect.Scaffolding.Models;
 using YukariConnect.Services;
 using YukariConnect.Minecraft.Services;
+using YukariConnect.Network;
 
 namespace YukariConnect.Scaffolding;
 
@@ -17,7 +18,32 @@ public sealed partial class RoomController
 {
     private async Task StepHostAsync(CancellationToken ct)
     {
-        //Console.WriteLine("=== BUILD STAMP: 2025-12-27-15:50 - StepHostAsync called, state={0} ===", _state);
+        // Handle terminal states
+        if (_state == RoomStateKind.Idle ||
+            _state == RoomStateKind.Stopping)
+        {
+            return;
+        }
+
+        // Clean up resources in Error state
+        if (_state == RoomStateKind.Error)
+        {
+            if (_runtime?.ScaffoldingServer != null)
+            {
+                try
+                {
+                    await _runtime.ScaffoldingServer.StopAsync();
+                    _runtime.ScaffoldingServer = null;
+                    _logger.LogInformation("ScaffoldingServer stopped in Error state");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to stop ScaffoldingServer in Error state");
+                }
+            }
+            return;
+        }
+
         if (_state == RoomStateKind.Host_Prepare)
             await StepHost_PrepareAsync(ct);
         else if (_state == RoomStateKind.Host_EasyTierStarting)
@@ -74,12 +100,11 @@ public sealed partial class RoomController
         if (_runtime!.EasyTierProcess != null)
         {
             // Already started, check if ready
-            var cliService = _serviceProvider.GetRequiredService<EasyTierCliService>();
-            _logger.LogInformation("Fetching node info from EasyTier CLI...");
-            var node = await cliService.NodeAsync(ct);
+            _logger.LogInformation("Fetching node info from network...");
+            var node = await _networkNode.GetNodeInfoAsync(ct);
             if (node != null)
             {
-                _logger.LogInformation("EasyTier is ready");
+                _logger.LogInformation("Network layer is ready");
 
                 // Get local node's virtual IP for logging
                 string? localVirtualIp = null;
@@ -95,6 +120,7 @@ public sealed partial class RoomController
                 }
 
                 // Log virtual network information for debugging
+                var servers = _peerDiscovery.GetPublicServers();
                 _logger.LogInformation("=== Virtual Network Information ===");
                 _logger.LogInformation("Network Name: {NetworkName}", _runtime.NetworkName);
                 _logger.LogInformation("Network Secret: {NetworkSecret}", _runtime.NetworkSecret);
@@ -104,7 +130,7 @@ public sealed partial class RoomController
                 {
                     _logger.LogInformation("Virtual IP: {VirtualIp}", localVirtualIp);
                 }
-                _logger.LogInformation("Public Servers: tcp://public.easytier.top:11010, tcp://public2.easytier.cn:54321");
+                _logger.LogInformation("Public Servers: {Servers}", string.Join(", ", servers));
 
                 // Log local node information
                 var hasHostname = node.RootElement.TryGetProperty("hostname", out var hostnameProp);
@@ -121,103 +147,43 @@ public sealed partial class RoomController
             }
         }
 
-        // Start EasyTier with host configuration
-        var env = _serviceProvider.GetRequiredService<IHostEnvironment>();
-        var publicServers = _serviceProvider.GetRequiredService<PublicServersService>();
-        var resourceDir = Path.Combine(env.ContentRootPath, "resource");
-        var coreExe = Path.Combine(resourceDir, OperatingSystem.IsWindows() ? "easytier-core.exe" : "easytier-core");
+        // Start network process with host configuration
+        var hostname = ScaffoldingHelpers.GenerateCenterHostname(_runtime.ScaffoldingPort);
 
-        if (!File.Exists(coreExe))
+        // Validate public servers before using them
+        _logger.LogInformation("Validating public servers...");
+        var publicServers = await _peerDiscovery.GetValidatedPublicServersAsync(ct);
+        if (publicServers.Length == 0)
         {
-            _lastError = "EasyTier core not found";
+            _lastError = "No valid public servers available";
             _state = RoomStateKind.Error;
             EmitStatus();
             return;
         }
 
-        var hostname = ScaffoldingHelpers.GenerateCenterHostname(_runtime.ScaffoldingPort);
-
-        // Use TCP public servers for Terracotta compatibility
-        // Terracotta uses these specific TCP servers
-        var tcpPublicServers = new[]
+        var config = new NetworkProcessConfig
         {
-            "tcp://public.easytier.top:11010",
-            "tcp://public2.easytier.cn:54321"
+            NetworkName = _runtime.NetworkName,
+            NetworkSecret = _runtime.NetworkSecret,
+            Hostname = hostname,
+            Ipv4 = "10.144.144.1",
+            IsHost = true,
+            ScaffoldingPort = _runtime.ScaffoldingPort,
+            PublicServers = publicServers
         };
 
-        var args = new List<string>
-        {
-            // Core options
-            "--no-tun",
-            "--multi-thread",
-            "--latency-first",
-            "--compression", "zstd",
-            "--enable-kcp-proxy",
-            // Network
-            "--network-name", _runtime.NetworkName,
-            "--network-secret", _runtime.NetworkSecret,
-            "--hostname", hostname,
-            "--ipv4", "10.144.144.1",
-            // Listeners - bind to specific interface to avoid Mihomo proxy
-            "-l", "udp://0.0.0.0:0",
-            "-l", "tcp://0.0.0.0:0",
-            // Port whitelist - only Scaffolding port initially
-            // MC port will be added dynamically after detection
-            "--tcp-whitelist", _runtime.ScaffoldingPort.ToString(),
-            // Public servers (use -p like Terracotta)
-            "-p", tcpPublicServers[0],
-            "-p", tcpPublicServers[1]
-        };
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = coreExe,
-            WorkingDirectory = resourceDir,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-        foreach (var arg in args)
-            psi.ArgumentList.Add(arg);
-
-        _runtime.EasyTierProcess = Process.Start(psi);
+        _logger.LogInformation("Starting network process...");
+        _runtime.EasyTierProcess = await _networkProcess.StartAsync(config, ct);
 
         if (_runtime.EasyTierProcess == null)
         {
-            _lastError = "Failed to start EasyTier";
+            _lastError = "Failed to start network process";
             _state = RoomStateKind.Error;
             EmitStatus();
             return;
         }
 
-        // Log the actual command line for debugging
-        _logger.LogInformation("EasyTier command line: {Exe} {Args}",
-            coreExe,
-            string.Join(" ", args.Select(a => a.Contains(' ') ? $"\"{a}\"" : a)));
-
-        // Log output
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                while (await _runtime.EasyTierProcess.StandardOutput.ReadLineAsync(ct) is string line)
-                    _logger.LogInformation("[EasyTier-stdout] {Line}", line);
-            }
-            catch { }
-        });
-
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                while (await _runtime.EasyTierProcess.StandardError.ReadLineAsync(ct) is string line)
-                    _logger.LogWarning("[EasyTier-stderr] {Line}", line);
-            }
-            catch { }
-        });
-
-        _logger.LogInformation("EasyTier started with PID {Pid}", _runtime.EasyTierProcess.Id);
+        _logger.LogInformation("Network process started with PID {Pid}", _runtime.EasyTierProcess.Id);
 
         // Wait for readiness
         var startTime = DateTime.UtcNow;
@@ -225,11 +191,10 @@ public sealed partial class RoomController
         {
             await Task.Delay(TimeSpan.FromSeconds(1), ct);
 
-            var cliService = _serviceProvider.GetRequiredService<EasyTierCliService>();
-            var node = await cliService.NodeAsync(ct);
+            var node = await _networkNode.GetNodeInfoAsync(ct);
             if (node != null)
             {
-                _logger.LogInformation("EasyTier is ready");
+                _logger.LogInformation("Network layer is ready");
 
                 // Get local node's virtual IP for logging
                 string? localVirtualIp = null;
@@ -254,7 +219,7 @@ public sealed partial class RoomController
                 {
                     _logger.LogInformation("Virtual IP: {VirtualIp}", localVirtualIp);
                 }
-                _logger.LogInformation("Public Servers: tcp://public.easytier.top:11010, tcp://public2.easytier.cn:54321");
+                _logger.LogInformation("Public Servers: {Servers}", string.Join(", ", publicServers));
 
                 // Log local node information
                 var hasHostname = node.RootElement.TryGetProperty("hostname", out var hostnameProp);
@@ -271,29 +236,22 @@ public sealed partial class RoomController
             }
         }
 
-        _lastError = "EasyTier startup timeout";
+        _lastError = "Network startup timeout";
         _state = RoomStateKind.Error;
         EmitStatus();
     }
 
+    private DateTime _mcDetectionStartTime;
+    private int _mcServerOfflineCount = 0;
+
     private async Task StepHost_MinecraftDetectingAsync(CancellationToken ct)
     {
-        // Log all local IPs for debugging
-        var localIps = GetAllLocalIPv4();
-        _logger.LogInformation("Local machine IPs: {IPs}", string.Join(", ", localIps));
+        // Track when we started detecting (first time only)
+        if (_mcDetectionStartTime == default)
+            _mcDetectionStartTime = DateTime.UtcNow;
 
         // Check if MC server is available via Minecraft LAN listener
         var mcState = _serviceProvider.GetRequiredService<MinecraftLanState>();
-
-        _logger.LogInformation("Scanning for MC servers... Found {Count} total servers",
-            mcState.TotalCount);
-
-        // Log all discovered servers for debugging
-        foreach (var server in mcState.AllServers)
-        {
-            _logger.LogInformation("  - Server: {EndPoint}, MOTD='{Motd}', IsLocalHost={IsLocalHost}, IsLocalNetwork={IsLocalNetwork}, IsVerified={IsVerified}",
-                server.EndPoint, server.Motd, server.IsLocalHost, server.IsLocalNetwork, server.IsVerified);
-        }
 
         // Look for local MC servers (from LAN, not virtual network)
         var localServer = mcState.AllServers.FirstOrDefault(s => s.IsLocalNetwork);
@@ -305,32 +263,62 @@ public sealed partial class RoomController
             _logger.LogInformation("Minecraft server detected on port {Port} from {EndPoint}",
                 _runtime.MinecraftPort, localServer.EndPoint);
 
-            // Update EasyTier whitelist to allow the MC port
-            var cliService = _serviceProvider.GetRequiredService<EasyTierCliService>();
+            // Update network whitelist to allow the MC port
             var mcPortStr = _runtime.MinecraftPort.ToString()!;
             var tcpWhitelist = new string[] { _runtime.ScaffoldingPort.ToString()!, mcPortStr };
             var udpWhitelist = new string[] { mcPortStr };
 
             var tcpWhitelistLog = string.Join(",", tcpWhitelist);
             var udpWhitelistLog = string.Join(",", udpWhitelist);
-            _logger.LogInformation("Setting EasyTier whitelist - TCP: {Tcp}, UDP: {Udp}",
+            _logger.LogInformation("Setting network whitelist - TCP: {Tcp}, UDP: {Udp}",
                 tcpWhitelistLog, udpWhitelistLog);
 
-            await cliService.SetTcpWhitelistAsync(tcpWhitelist, ct);
-            await cliService.SetUdpWhitelistAsync(udpWhitelist, ct);
+            await _networkNode.SetTcpWhitelistAsync(tcpWhitelist, ct);
+            await _networkNode.SetUdpWhitelistAsync(udpWhitelist, ct);
+
+            // Reset detection timer and move to running state
+            _mcDetectionStartTime = default;
+            _state = RoomStateKind.Host_Running;
+            EmitStatus();
+            _logger.LogInformation("Minecraft server found, transitioning to Host_Running state");
         }
         else
         {
-            // No MC server yet - that's ok, set null (c:server_port will return status=32)
+            // Set null port (c:server_port will return status=32)
             _runtime!.ScaffoldingServer!.SetMinecraftPort(null);
-            _logger.LogWarning("No local MC server detected - c:server_port will return status=32");
+
+            if (_terracottaCompatibilityMode)
+            {
+                // Terracotta compatible mode: Wait for MC server before starting
+                // Log periodically (every 30 seconds) to avoid spam
+                if (DateTime.UtcNow - _mcDetectionStartTime > TimeSpan.FromSeconds(30))
+                {
+                    _logger.LogInformation("Still scanning for Minecraft server... (total servers found: {Count})",
+                        mcState.TotalCount);
+                    _mcDetectionStartTime = DateTime.UtcNow;
+                }
+
+                // Stay in detecting state - don't transition to running yet
+                // This allows continuous scanning until a server is found
+                await Task.Delay(TimeSpan.FromSeconds(2), ct);
+            }
+            else
+            {
+                // Yukari mode: Start immediately and dynamically update MC port later
+                _logger.LogInformation("Yukari mode: No MC server detected yet, but starting anyway (will update port dynamically when server appears)");
+
+                // Set initial network whitelist (Scaffolding only)
+                var tcpWhitelist = new string[] { _runtime.ScaffoldingPort.ToString()! };
+                await _networkNode.SetTcpWhitelistAsync(tcpWhitelist, ct);
+                await _networkNode.SetUdpWhitelistAsync([], ct);
+
+                _mcDetectionStartTime = default;
+                _state = RoomStateKind.Host_Running;
+                EmitStatus();
+                _logger.LogInformation("Yukari mode: Transitioning to Host_Running state without MC server (will detect dynamically)");
+            }
         }
-
-        _state = RoomStateKind.Host_Running;
-        EmitStatus();
     }
-
-    private const int MC_MAX_FAILURES = 3;
 
     private async Task StepHost_RunningAsync(CancellationToken ct)
     {
@@ -343,41 +331,21 @@ public sealed partial class RoomController
             return;
         }
 
-        // MC server TCP connection check (like Terracotta does)
-        var mcPort = _runtime.MinecraftPort;
-        if (mcPort.HasValue)
-        {
-            var isMcAlive = await CheckMcServerConnectionAsync(mcPort.Value, ct);
-            if (isMcAlive)
-            {
-                if (_mcFailureCount > 0)
-                {
-                    _logger.LogInformation("MC server connection restored");
-                }
-                _mcFailureCount = 0;
-            }
-            else
-            {
-                _mcFailureCount++;
-                _logger.LogWarning("MC server check failed ({Count}/{Max})",
-                    _mcFailureCount, MC_MAX_FAILURES);
-
-                if (_mcFailureCount >= MC_MAX_FAILURES)
-                {
-                    _lastError = "Minecraft server connection lost";
-                    _logger.LogError("Minecraft server connection lost after {Count} failures",
-                        _mcFailureCount);
-                    _state = RoomStateKind.Error;
-                    EmitStatus();
-                    return;
-                }
-            }
-        }
-
         // Check for MC server changes (LAN broadcast discovery)
         var mcState = _serviceProvider.GetRequiredService<MinecraftLanState>();
-        var localServer = mcState.AllServers.FirstOrDefault(s => s.IsLocalNetwork);
+        var allServers = mcState.AllServers.ToList();
+        var localServer = allServers.FirstOrDefault(s => s.IsLocalNetwork);
         var newPort = localServer != null ? (ushort?)localServer.EndPoint.Port : null;
+
+        // Check if local server is verified (responsive)
+        var isLocalServerVerified = localServer?.IsVerified ?? false;
+
+        _logger.LogInformation("Host_Running loop: newPort={NewPort}, currentPort={CurrentPort}, terracottaMode={TerracottaMode}, totalServers={TotalCount}, isVerified={IsVerified}",
+            newPort.HasValue ? newPort.Value.ToString() : "null",
+            _runtime.MinecraftPort.HasValue ? _runtime.MinecraftPort.Value.ToString() : "null",
+            _terracottaCompatibilityMode,
+            allServers.Count,
+            isLocalServerVerified);
 
         if (newPort != _runtime.MinecraftPort)
         {
@@ -386,81 +354,80 @@ public sealed partial class RoomController
 
             if (newPort.HasValue)
             {
-                _logger.LogInformation("Minecraft port updated to {Port} from {EndPoint}",
+                _logger.LogInformation("Minecraft server detected on port {Port} from {EndPoint}",
                     _runtime.MinecraftPort.Value, localServer!.EndPoint);
 
-                // Update EasyTier whitelist to allow the new MC port
-                var cliService = _serviceProvider.GetRequiredService<EasyTierCliService>();
+                // Update network whitelist to allow the new MC port
                 var mcPortStr = newPort.Value.ToString()!;
                 var tcpWhitelist = new string[] { _runtime.ScaffoldingPort.ToString()!, mcPortStr };
                 var udpWhitelist = new string[] { mcPortStr };
 
                 var tcpWhitelistLog = string.Join(",", tcpWhitelist);
                 var udpWhitelistLog = string.Join(",", udpWhitelist);
-                _logger.LogInformation("Updating EasyTier whitelist - TCP: {Tcp}, UDP: {Udp}",
+                _logger.LogInformation("Updating network whitelist - TCP: {Tcp}, UDP: {Udp}",
                     tcpWhitelistLog, udpWhitelistLog);
 
-                await cliService.SetTcpWhitelistAsync(tcpWhitelist, ct);
-                await cliService.SetUdpWhitelistAsync(udpWhitelist, ct);
+                await _networkNode.SetTcpWhitelistAsync(tcpWhitelist, ct);
+                await _networkNode.SetUdpWhitelistAsync(udpWhitelist, ct);
 
-                // Reset failure count when port changes
-                _mcFailureCount = 0;
+                EmitStatus();
             }
             else
             {
-                _logger.LogWarning("Minecraft server disappeared - c:server_port will return status=32");
+                _logger.LogInformation("Minecraft server not available - c:server_port will return status=32");
 
-                // Remove MC port from EasyTier whitelist (keep only Scaffolding port)
-                var cliService = _serviceProvider.GetRequiredService<EasyTierCliService>();
+                // Remove MC port from network whitelist (keep only Scaffolding port)
                 var tcpWhitelist = new string[] { _runtime.ScaffoldingPort.ToString()! };
 
                 _logger.LogInformation("Removing MC port from whitelist - TCP: {Tcp}, UDP: (empty)",
                     string.Join(",", tcpWhitelist));
 
-                await cliService.SetTcpWhitelistAsync(tcpWhitelist, ct);
-                await cliService.SetUdpWhitelistAsync([], ct);
+                _logger.LogInformation("Calling SetTcpWhitelistAsync with {Count} ports", tcpWhitelist.Length);
+                await _networkNode.SetTcpWhitelistAsync(tcpWhitelist, ct);
+                _logger.LogInformation("Calling SetUdpWhitelistAsync with empty ports");
+                await _networkNode.SetUdpWhitelistAsync([], ct);
+                _logger.LogInformation("Whitelist update completed");
+
+                EmitStatus();
             }
-
-            EmitStatus();
         }
 
+        _logger.LogInformation("About to check offline status, isVerified={IsVerified}, terracottaMode={TerracottaMode}",
+            isLocalServerVerified, _terracottaCompatibilityMode);
+
+        // Track MC server offline status in Terracotta compatibility mode
+        // Check every cycle, not just when port changes
+        // In Terracotta mode, we only enter Host_Running after finding an MC server,
+        // so we always need to check if it goes offline
+        if (_terracottaCompatibilityMode)
+        {
+            if (isLocalServerVerified)
+            {
+                // MC server is verified (responsive), reset offline counter
+                _mcServerOfflineCount = 0;
+            }
+            else
+            {
+                // MC server was online before but is now:
+                // - NOT verified (offline but still in list)
+                // - OR completely gone from list
+                _mcServerOfflineCount++;
+                _logger.LogWarning("Minecraft server offline (count: {Count}/{Threshold})",
+                    _mcServerOfflineCount, _options.McServerOfflineThreshold);
+
+                if (_mcServerOfflineCount >= _options.McServerOfflineThreshold)
+                {
+                    _lastError = $"Minecraft server offline for {_mcServerOfflineCount} consecutive checks";
+                    _logger.LogError("Minecraft server offline threshold reached, transitioning to Error state");
+                    _state = RoomStateKind.Error;
+                    EmitStatus();
+                    return;
+                }
+            }
+        }
+
+        _logger.LogInformation("Host_Running loop completed, sleeping 5s");
         await Task.Delay(TimeSpan.FromSeconds(5), ct);
-    }
-
-    /// <summary>
-    /// Check MC server connection using TCP handshake (like Terracotta's check_mc_conn).
-    /// Sends MC handshake packet (0xFE) and expects 0xFF response.
-    /// </summary>
-    private static async Task<bool> CheckMcServerConnectionAsync(ushort port, CancellationToken ct)
-    {
-        try
-        {
-            using var socket = new System.Net.Sockets.Socket(
-                System.Net.Sockets.AddressFamily.InterNetwork,
-                System.Net.Sockets.SocketType.Stream,
-                System.Net.Sockets.ProtocolType.Tcp);
-
-            // Connect with timeout
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(TimeSpan.FromSeconds(5));
-
-            await socket.ConnectAsync("127.0.0.1", port, cts.Token);
-
-            // Send MC legacy handshake packet (0xFE)
-            var handshake = new byte[] { 0xFE };
-            await socket.SendAsync(handshake, System.Net.Sockets.SocketFlags.None, cts.Token);
-
-            // Receive response
-            var response = new byte[1];
-            var received = await socket.ReceiveAsync(response, System.Net.Sockets.SocketFlags.None, cts.Token);
-
-            // MC server should respond with 0xFF
-            return received == 1 && response[0] == 0xFF;
-        }
-        catch
-        {
-            return false;
-        }
     }
 
     /// <summary>

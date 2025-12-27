@@ -246,7 +246,7 @@ public sealed partial class MinecraftLanListener : IHostedService, IAsyncDisposa
 
                 // Remove verified servers that haven't responded to ping in a while
                 if (server.IsVerified && server.LastPingAt.HasValue &&
-                    now - server.LastPingAt.Value > TimeSpan.FromMinutes(2))
+                    now - server.LastPingAt.Value > TimeSpan.FromSeconds(15))
                 {
                     if (_discovered.TryRemove(kv.Key, out _))
                     {
