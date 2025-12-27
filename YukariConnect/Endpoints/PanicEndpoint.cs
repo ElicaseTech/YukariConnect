@@ -6,19 +6,19 @@ namespace YukariConnect.Endpoints
 
         public static void Map(WebApplication app)
         {
-            app.MapGet("/panic", (bool peaceful, IHostApplicationLifetime lifetime) =>
+            app.MapGet("/panic", (bool peaceful) =>
             {
                 // Terracotta behavior:
-                // - If peaceful=true: Gracefully shutdown the application
+                // - If peaceful=true: Gracefully shutdown the application (exit code 0)
                 // - If peaceful=false (default): Trigger a panic (crash)
 
                 if (peaceful)
                 {
-                    // Graceful shutdown
+                    // Graceful shutdown - exit the process like Terracotta
                     _ = Task.Run(async () =>
                     {
                         await Task.Delay(100); // Give time for response to be sent
-                        lifetime.StopApplication();
+                        Environment.Exit(0);
                     });
                     return TypedResults.Ok(new PanicResponse("shutting down"));
                 }
