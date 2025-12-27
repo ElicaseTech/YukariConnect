@@ -363,3 +363,8 @@ MigrationBackup/
 FodyWeavers.xsd
 .docs/*
 resource/
+/Frontend/.vscode
+/YukariConnect/wwwroot/assets
+/YukariConnect/wwwroot/icons
+/YukariConnect/wwwroot/favicon.ico
+/YukariConnect/wwwroot/index.html
