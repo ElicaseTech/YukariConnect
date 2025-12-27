@@ -1,1 +1,1 @@
-{"TerracottaCompatibilityMode":true,"McServerOfflineThreshold":6,"EasyTierStartupTimeoutSeconds":12,"CenterDiscoveryTimeoutSeconds":25,"HttpPort":5062,"DefaultScaffoldingPort":13448,"LauncherCustomString":null}
+{"TerracottaCompatibilityMode":true,"McServerOfflineThreshold":6,"EasyTierStartupTimeoutSeconds":12,"CenterDiscoveryTimeoutSeconds":25,"HttpPort":5062,"DefaultScaffoldingPort":13448,"LauncherCustomString":null,"SuppressHttpLogPaths":["/state"]}

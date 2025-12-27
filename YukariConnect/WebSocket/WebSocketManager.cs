@@ -175,8 +175,10 @@ public class WebSocketManager : IWebSocketManager
         }
         else
         {
-            // For other types, use reflection (AOT-safe with DynamicallyAccessedMembers)
+            // For other types, use reflection
+#pragma warning disable IL2075 // 'this' argument does not satisfy 'DynamicallyAccessedMemberTypes.PublicProperties'
             var props = data.GetType().GetProperties();
+#pragma warning restore IL2075
             writer.Write("{");
             var first = true;
             foreach (var prop in props)

@@ -21,12 +21,20 @@ namespace YukariConnect.Services
             var coreExe = Path.Combine(resourceDir, "easytier-core.exe");
             if (File.Exists(coreExe)) return;
             Directory.CreateDirectory(resourceDir);
+
+            // Use a separate timeout token instead of the app stopping token
+            using var internalCts = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, internalCts.Token);
+
             try
             {
                 using var http = new HttpClient();
                 http.DefaultRequestHeaders.UserAgent.ParseAdd("YukariConnect/1.0");
                 http.DefaultRequestHeaders.Accept.ParseAdd("application/json");
-                var latestJson = await http.GetStringAsync("https://api.github.com/repos/EasyTier/EasyTier/releases/latest", cancellationToken);
+                http.Timeout = TimeSpan.FromMinutes(10);
+
+                _logger.LogInformation("Fetching EasyTier release info...");
+                var latestJson = await http.GetStringAsync("https://api.github.com/repos/EasyTier/EasyTier/releases/latest", linkedCts.Token);
                 using var doc = JsonDocument.Parse(latestJson);
                 var root = doc.RootElement;
                 var assets = root.GetProperty("assets");
@@ -76,13 +84,13 @@ namespace YukariConnect.Services
                 }
                 var zipPath = Path.Combine(resourceDir, assetName!);
                 _logger.LogInformation("Downloading EasyTier from {Url}...", downloadUrl);
-                using (var resp = await http.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken))
+                using (var resp = await http.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, linkedCts.Token))
                 {
                     resp.EnsureSuccessStatusCode();
                     var totalBytes = resp.Content.Headers.ContentLength ?? 0;
                     var totalMB = totalBytes / (1024.0 * 1024.0);
 
-                    await using var contentStream = await resp.Content.ReadAsStreamAsync(cancellationToken);
+                    await using var contentStream = await resp.Content.ReadAsStreamAsync(linkedCts.Token);
                     await using var fs = new FileStream(zipPath, FileMode.Create, FileAccess.Write, FileShare.None);
 
                     var buffer = new byte[81920]; // 80KB buffer
@@ -90,9 +98,9 @@ namespace YukariConnect.Services
                     int lastLoggedPercent = -1;
                     int read;
 
-                    while ((read = await contentStream.ReadAsync(buffer, cancellationToken)) > 0)
+                    while ((read = await contentStream.ReadAsync(buffer, linkedCts.Token)) > 0)
                     {
-                        await fs.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+                        await fs.WriteAsync(buffer.AsMemory(0, read), linkedCts.Token);
                         bytesRead += read;
 
                         // Log progress every 10%
@@ -109,7 +117,7 @@ namespace YukariConnect.Services
                         }
                     }
                 }
-                _logger.LogInformation("EasyTier download completed");
+                _logger.LogInformation("EasyTier download completed, extracting...");
                 if (assetName!.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
                 {
                     using var fs = new FileStream(zipPath, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -136,7 +144,7 @@ namespace YukariConnect.Services
                         await using var outStream = new FileStream(destPath, FileMode.Create, FileAccess.Write, FileShare.None);
                         if (entry.DataStream != null)
                         {
-                            await entry.DataStream.CopyToAsync(outStream, cancellationToken);
+                            await entry.DataStream.CopyToAsync(outStream, linkedCts.Token);
                         }
                     }
                 }
@@ -160,6 +168,10 @@ namespace YukariConnect.Services
                         _logger.LogWarning("EasyTier core not found after extraction");
                     }
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogWarning("EasyTier download was cancelled");
             }
             catch (Exception ex)
             {

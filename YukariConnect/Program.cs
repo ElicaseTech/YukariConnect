@@ -3,6 +3,7 @@ using System.Reflection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 using YukariConnect.Endpoints;
 using YukariConnect.Services;
 using YukariConnect.Minecraft.Services;
@@ -38,7 +39,9 @@ namespace YukariConnect
             // For now, we rely on the built-in OpenAPI JSON endpoint
 
             // Register EasyTier infrastructure services
-            builder.Services.AddHostedService<EasyTierResourceInitializer>();
+            // Note: EasyTierResourceInitializer is NOT registered as IHostedService here
+            // because we need to start it manually AFTER WebSocket logging is ready
+            builder.Services.AddSingleton<EasyTierResourceInitializer>();
             builder.Services.AddSingleton<EasyTierCliService>();
             builder.Services.AddSingleton<PublicServersService>();
 
@@ -61,22 +64,51 @@ namespace YukariConnect
             // Register Scaffolding services
             builder.Services.AddSingleton<RoomController>();
 
+            // Configure logging using standard ASP.NET Core approach
+            builder.Logging.ClearProviders();
+
+            // Add configuration from appsettings.json BEFORE adding providers
+            builder.Logging.AddConfiguration(builder.Configuration.GetSection("Logging"));
+
+            // Add console logging (will use configuration above)
+            builder.Logging.AddConsole();
+
+            // Add debug logging
+            builder.Logging.AddDebug();
+
+            // Register WebSocket logger as a provider that will be added later
+            // We need to defer this because ILogBroadcaster requires DI container
+            var wsLoggerProvider = new DeferredWebSocketLoggerProvider();
+            builder.Logging.AddProvider(wsLoggerProvider);
+            builder.Services.AddSingleton(wsLoggerProvider);
+
             var app = builder.Build();
+
+            // Initialize the deferred WebSocket logging provider now that DI container is ready
+            var deferredWsProvider = app.Services.GetRequiredService<DeferredWebSocketLoggerProvider>();
+            deferredWsProvider.Initialize(app.Services);
 
             // Enable WebSocket support (must be before other middleware)
             app.UseWebSockets();
 
-            // Add WebSocket logging provider after building the app
-            // so we can resolve ILogBroadcaster from DI
-            var wsManager = app.Services.GetRequiredService<YukariConnect.WebSocket.IWebSocketManager>();
-            var broadcaster = app.Services.GetRequiredService<Logging.ILogBroadcaster>();
-            var loggerFactory = app.Services.GetService<ILoggerFactory>();
-            loggerFactory?.AddProvider(new WebSocketLoggerProvider(broadcaster));
-
             // Log WebSocket initialization
+            var loggerFactory = app.Services.GetService<ILoggerFactory>();
             var logger = loggerFactory?.CreateLogger<Program>();
-            logger?.LogInformation("WebSocket infrastructure initialized (Manager: {ManagerType}, Broadcaster: {BroadcasterType})",
-                wsManager.GetType().Name, broadcaster.GetType().Name);
+            logger?.LogInformation("WebSocket infrastructure initialized");
+
+            // Start EasyTier resource initialization AFTER WebSocket logging is ready
+            var easyTierInitializer = app.Services.GetRequiredService<EasyTierResourceInitializer>();
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await easyTierInitializer.StartAsync(app.Lifetime.ApplicationStopping);
+                }
+                catch (Exception ex)
+                {
+                    logger?.LogError(ex, "EasyTier resource initialization failed");
+                }
+            });
 
             // Configure embedded file provider for wwwroot
             // This allows serving static files from embedded resources

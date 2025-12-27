@@ -51,4 +51,11 @@ public class YukariOptions
     /// Example: "mylauncher/1.0.0"
     /// </summary>
     public string? LauncherCustomString { get; set; }
+
+    /// <summary>
+    /// HTTP request paths to suppress logging for (frequently polled endpoints).
+    /// Default: ["/state"]
+    /// Set to empty array [] to log all requests.
+    /// </summary>
+    public string[] SuppressHttpLogPaths { get; set; } = new[] { "/state" };
 }

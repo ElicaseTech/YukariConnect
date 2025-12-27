@@ -25,7 +25,7 @@
 
   <!-- Embed wwwroot files for single-file deployment -->
   <ItemGroup>
-    <EmbeddedResource Include="wwwroot\**\*" />
+    <EmbeddedResource Include="wwwroot\**\*" Exclude="wwwroot\bin\**;wwwroot\obj\**" />
   </ItemGroup>
 
 </Project>
