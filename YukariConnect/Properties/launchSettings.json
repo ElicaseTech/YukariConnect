@@ -3,7 +3,6 @@
     "http": {
       "commandName": "Project",
       "launchBrowser": true,
-      "launchUrl": "todos",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development"
       },

@@ -29,7 +29,7 @@ namespace YukariConnect
                 options.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonSerializerContext.Default);
             });
 
-            builder.Services.AddOpenApi();
+            //builder.Services.AddOpenApi();
             builder.Services.AddEndpointsApiExplorer();
 
             // TODO: Swagger with AOT requires additional configuration
@@ -114,10 +114,10 @@ namespace YukariConnect
                 YukariConnect.Network.ChildProcessManager.Cleanup();
             });
 
-            if (app.Environment.IsDevelopment())
-            {
-                app.MapOpenApi();
-            }
+            //if (app.Environment.IsDevelopment())
+            //{
+            //    app.MapOpenApi();
+            //}
 
             // Enable static files for web console
             app.UseFileServer();
