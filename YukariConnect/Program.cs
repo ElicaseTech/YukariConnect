@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using System.Reflection;
 using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Hosting;
 using YukariConnect.Endpoints;
 using YukariConnect.Services;
 using YukariConnect.Minecraft.Services;
@@ -17,6 +18,11 @@ namespace YukariConnect
             var options = YukariConfiguration.LoadOrCreate();
 
             var builder = WebApplication.CreateSlimBuilder(args);
+
+            builder.Services.Configure<HostOptions>(o =>
+            {
+                o.ShutdownTimeout = TimeSpan.FromSeconds(5);
+            });
 
             builder.Services.ConfigureHttpJsonOptions(options =>
             {
@@ -80,16 +86,25 @@ namespace YukariConnect
             // Log startup info with port information in machine-readable format
             LogStartupInfo(app);
 
-            // Register shutdown handler to clean up RoomController
             app.Lifetime.ApplicationStopping.Register(() =>
             {
                 Console.WriteLine("[Shutdown] Cleaning up RoomController...");
                 var roomController = app.Services.GetService<RoomController>();
                 if (roomController != null)
                 {
-                    Console.WriteLine("[Shutdown] Disposing RoomController...");
-                    roomController.DisposeAsync().AsTask().GetAwaiter().GetResult();
-                    Console.WriteLine("[Shutdown] RoomController disposed");
+                    Console.WriteLine("[Shutdown] Stopping RoomController asynchronously...");
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await roomController.StopAsync();
+                            Console.WriteLine("[Shutdown] RoomController stopped");
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"[Shutdown] RoomController stop error: {ex.Message}");
+                        }
+                    });
                 }
             });
 

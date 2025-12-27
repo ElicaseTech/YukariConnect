@@ -1,3 +1,4 @@
 <Solution>
+  <Project Path="YukariConnect.Test/YukariConnect.Test.csproj" />
   <Project Path="YukariConnect/YukariConnect.csproj" />
 </Solution>

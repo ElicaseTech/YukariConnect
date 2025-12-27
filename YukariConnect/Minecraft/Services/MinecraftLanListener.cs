@@ -109,14 +109,14 @@ public sealed partial class MinecraftLanListener : IHostedService, IAsyncDisposa
 
         _cts.Cancel();
 
+        try { _socket?.Close(); } catch { }
+        try { _socket?.Dispose(); } catch { }
+
         await Task.WhenAll(
             SafeAwait(_recvLoop),
             SafeAwait(_pingLoop),
             SafeAwait(_cleanupLoop)
         );
-
-        try { _socket?.Close(); } catch { }
-        try { _socket?.Dispose(); } catch { }
 
         _cts.Dispose();
         _cts = null;
@@ -138,17 +138,25 @@ public sealed partial class MinecraftLanListener : IHostedService, IAsyncDisposa
         if (_socket == null) return;
 
         var buf = new byte[2048];
-        EndPoint remote = new IPEndPoint(IPAddress.Any, 0);
+        EndPoint any = new IPEndPoint(IPAddress.Any, 0);
 
         while (!ct.IsCancellationRequested)
         {
-            int len;
+            int len = 0;
+            EndPoint remote = any;
             try
             {
-                len = await Task.Run(() => _socket.ReceiveFrom(buf, ref remote), ct);
+                var res = await _socket.ReceiveFromAsync(new ArraySegment<byte>(buf), SocketFlags.None, any, ct);
+                len = res.ReceivedBytes;
+                remote = res.RemoteEndPoint;
             }
             catch (OperationCanceledException) { break; }
             catch (ObjectDisposedException) { break; }
+            catch (SocketException)
+            {
+                if (ct.IsCancellationRequested) break;
+                continue;
+            }
             catch
             {
                 continue;
