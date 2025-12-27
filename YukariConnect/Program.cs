@@ -1,4 +1,6 @@
 using System.Text.Json.Serialization;
+using System.Reflection;
+using Microsoft.Extensions.FileProviders;
 using YukariConnect.Endpoints;
 using YukariConnect.Services;
 using YukariConnect.Minecraft.Services;
@@ -48,6 +50,26 @@ namespace YukariConnect
             builder.Services.AddSingleton<RoomController>();
 
             var app = builder.Build();
+
+            // Configure embedded file provider for wwwroot
+            // This allows serving static files from embedded resources
+            var assembly = Assembly.GetExecutingAssembly();
+            var embeddedProvider = new EmbeddedFileProvider(assembly, "YukariConnect.wwwroot");
+
+            app.UseStaticFiles(new StaticFileOptions
+            {
+                FileProvider = embeddedProvider,
+                RequestPath = ""
+            });
+
+            // Fallback to physical files for development
+            if (app.Environment.IsDevelopment())
+            {
+                app.UseStaticFiles(new StaticFileOptions
+                {
+                    RequestPath = ""
+                });
+            }
 
             // Initialize ApplicationLogging for static contexts
             YukariConnect.Network.ApplicationLogging.Configure(app.Services.GetRequiredService<ILoggerFactory>());
