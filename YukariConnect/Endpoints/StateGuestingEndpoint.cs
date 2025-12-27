@@ -15,6 +15,7 @@ namespace YukariConnect.Endpoints
                 }
 
                 // player parameter is optional
+                // NOTE: Terracotta does NOT support launcher/vendor customization via query params
                 var playerName = string.IsNullOrWhiteSpace(player) ? "Guest" : player!;
 
                 // Start guest mode
@@ -23,7 +24,7 @@ namespace YukariConnect.Endpoints
                     await roomController.StartGuestAsync(
                         roomCode: room!,
                         playerName: playerName,
-                        launcherCustomString: null
+                        launcherCustomString: null  // Terracotta compatibility: no custom launcher
                     );
 
                     return Results.Ok();

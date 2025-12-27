@@ -120,6 +120,7 @@ namespace YukariConnect
             MinecraftEndpoint.Map(app);
             RoomEndpoint.Map(app);
             EasyTierEndpoint.Map(app);
+            ConfigEndpoint.Map(app);
 
             app.Run();
         }
@@ -247,6 +248,9 @@ namespace YukariConnect
     [JsonSerializable(typeof(YukariConnect.Endpoints.RoomEndpoint.StartGuestRequest))]
     [JsonSerializable(typeof(YukariConnect.Endpoints.RoomEndpoint.MessageResponse))]
     [JsonSerializable(typeof(YukariConnect.Endpoints.RoomEndpoint.RoomErrorResponse))]
+    [JsonSerializable(typeof(YukariConnect.Endpoints.ConfigEndpoint.ConfigResponse))]
+    [JsonSerializable(typeof(YukariConnect.Endpoints.ConfigEndpoint.SetLauncherRequest))]
+    [JsonSerializable(typeof(YukariConnect.Endpoints.ConfigEndpoint.MessageResponse))]
     [JsonSerializable(typeof(YukariConnect.Scaffolding.Models.PlayerPingRequest))]
     [JsonSerializable(typeof(YukariConnect.Scaffolding.Models.ScaffoldingProfile))]
     [JsonSerializable(typeof(List<YukariConnect.Scaffolding.Models.ScaffoldingProfile>))]

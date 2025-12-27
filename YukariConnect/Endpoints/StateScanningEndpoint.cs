@@ -10,13 +10,14 @@ namespace YukariConnect.Endpoints
             {
                 // room parameter is optional in Terracotta - if not provided, generate a new room code
                 // player parameter is optional
+                // NOTE: Terracotta does NOT support launcher/vendor customization via query params
                 var playerName = string.IsNullOrWhiteSpace(player) ? "Host" : player!;
 
                 // Start host mode
                 await roomController.StartHostAsync(
                     scaffoldingPort: 13448,
                     playerName: playerName,
-                    launcherCustomString: null
+                    launcherCustomString: null  // Terracotta compatibility: no custom launcher
                 );
 
                 return Results.Ok();
