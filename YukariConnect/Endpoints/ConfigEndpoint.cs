@@ -18,7 +18,7 @@ public static class ConfigEndpoint
         [property: JsonPropertyName("launcherCustomString")] string? LauncherCustomString
     );
 
-    public record MessageResponse([property: JsonPropertyName("message")] string Message);
+    public record ConfigMessageResponse([property: JsonPropertyName("message")] string Message);
 
     public static void Map(WebApplication app)
     {
@@ -42,7 +42,7 @@ public static class ConfigEndpoint
     {
         options.LauncherCustomString = request.LauncherCustomString;
 
-        return TypedResults.Ok(new MessageResponse(
+        return TypedResults.Ok(new ConfigMessageResponse(
             $"Launcher custom string set to: {request.LauncherCustomString ?? "(null)"}"
         ));
     }

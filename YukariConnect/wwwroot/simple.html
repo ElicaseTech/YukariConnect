@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YukariConnect</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg-primary: #1a1a2e;
+            --bg-card: rgba(255, 255, 255, 0.05);
+            --bg-card-hover: rgba(255, 255, 255, 0.1);
+            --text-primary: #f0f0f0;
+            --text-secondary: rgba(240, 240, 240, 0.7);
+            --border: rgba(255, 255, 255, 0.1);
+            --btn-primary: linear-gradient(135deg, #4CAF50, #8BC34A);
+            --btn-secondary: linear-gradient(135deg, #2196F3, #03A9F4);
+            --btn-back: linear-gradient(135deg, #757575, #9e9e9e);
+            --input-bg: rgba(255, 255, 255, 0.1);
+            --input-border: rgba(255, 255, 255, 0.2);
+            --accent-green: #8BC34A;
+        }
+        [data-theme="light"] {
+            --bg-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --bg-card: rgba(255, 255, 255, 0.9);
+            --bg-card-hover: rgba(255, 255, 255, 1);
+            --text-primary: #333;
+            --text-secondary: rgba(51, 51, 51, 0.7);
+            --border: rgba(0, 0, 0, 0.1);
+            --input-bg: rgba(0, 0, 0, 0.05);
+            --input-border: rgba(0, 0, 0, 0.2);
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            transition: background 0.3s;
+        }
+        .container {
+            width: 100%;
+            max-width: 900px;
+            text-align: center;
+        }
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 300;
+            margin-bottom: 10px;
+            background: linear-gradient(to right, #ff9a9e, #fad0c4);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+        [data-theme="light"] h1 {
+            background: linear-gradient(to right, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+        .subtitle {
+            font-size: 1rem;
+            opacity: 0.7;
+            margin-bottom: 40px;
+        }
+        .view {
+            display: none;
+        }
+        .view.active {
+            display: block;
+        }
+        .tile-container {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            flex-wrap: wrap;
+        }
+        .tile {
+            width: 300px;
+            height: 250px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        .tile::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+        }
+        .tile:hover {
+            transform: translateY(-5px);
+            background: var(--bg-card-hover);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        }
+        .tile-host::before {
+            background: var(--btn-primary);
+        }
+        .tile-guest::before {
+            background: var(--btn-secondary);
+        }
+        .tile-icon {
+            font-size: 4rem;
+            margin-bottom: 15px;
+        }
+        .tile-title {
+            font-size: 1.5rem;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+        .tile-desc {
+            font-size: 0.9rem;
+            opacity: 0.7;
+            max-width: 80%;
+        }
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 40px;
+            max-width: 500px;
+            margin: 0 auto;
+        }
+        .card-title {
+            font-size: 1.5rem;
+            margin-bottom: 30px;
+        }
+        .input-group {
+            margin-bottom: 20px;
+        }
+        .input-field {
+            width: 100%;
+            padding: 15px 20px;
+            font-size: 1.1rem;
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            text-align: center;
+        }
+        .input-field:focus {
+            outline: none;
+            border-color: #2196F3;
+        }
+        .input-field::placeholder {
+            color: var(--text-secondary);
+        }
+        .btn {
+            padding: 12px 30px;
+            font-size: 1rem;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            color: white;
+            margin: 5px;
+            transition: transform 0.2s;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+        }
+        .btn-primary {
+            background: var(--btn-secondary);
+        }
+        .btn-success {
+            background: var(--btn-primary);
+        }
+        .btn-back {
+            background: var(--btn-back);
+        }
+        .btn-group {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .loading-spinner {
+            width: 60px;
+            height: 60px;
+            margin: 0 auto 20px;
+            position: relative;
+        }
+        .loading-spinner div {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #4CAF50;
+            animation: bounce 1.2s linear infinite;
+        }
+        .loading-spinner div:nth-child(1) { top: 6px; left: 6px; animation-delay: 0s; background: #f44336; }
+        .loading-spinner div:nth-child(2) { top: 6px; left: 24px; animation-delay: -0.4s; background: #ff9800; }
+        .loading-spinner div:nth-child(3) { top: 6px; left: 42px; animation-delay: -0.8s; background: #ffeb3b; }
+        .loading-spinner div:nth-child(4) { top: 24px; left: 6px; animation-delay: -0.4s; background: #4CAF50; }
+        .loading-spinner div:nth-child(5) { top: 24px; left: 24px; animation-delay: -0.8s; background: #2196F3; }
+        .loading-spinner div:nth-child(6) { top: 24px; left: 42px; animation-delay: -1.2s; background: #9c27b0; }
+        .loading-spinner div:nth-child(7) { top: 42px; left: 6px; animation-delay: -0.8s; background: #00bcd4; }
+        .loading-spinner div:nth-child(8) { top: 42px; left: 24px; animation-delay: -1.2s; background: #795548; }
+        .loading-spinner div:nth-child(9) { top: 42px; left: 42px; animation-delay: -1.6s; background: #607d8b; }
+        @keyframes bounce {
+            0%, 100% { transform: scale(1.2); }
+            50% { transform: scale(0.5); }
+        }
+        .loading-text {
+            font-size: 1.1rem;
+            margin-bottom: 20px;
+        }
+        .result-icon {
+            font-size: 4rem;
+            margin-bottom: 15px;
+        }
+        .room-code {
+            font-family: 'Consolas', monospace;
+            font-size: 1.2rem;
+            background: var(--input-bg);
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin: 15px 0;
+            letter-spacing: 2px;
+            color: var(--accent-green);
+            border: 2px dashed rgba(139, 195, 74, 0.3);
+            user-select: all;
+            cursor: pointer;
+        }
+        .room-code:hover {
+            background: var(--bg-card-hover);
+        }
+        .result-desc {
+            font-size: 0.95rem;
+            opacity: 0.8;
+            line-height: 1.6;
+            margin: 15px 0;
+        }
+        .error-icon { color: #f44336; }
+        .success-icon { color: #4CAF50; }
+        .switch-link {
+            position: fixed;
+            bottom: 15px;
+            right: 15px;
+            padding: 8px 15px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+        .switch-link:hover {
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+        }
+        .theme-btn {
+            position: fixed;
+            top: 15px;
+            right: 15px;
+            padding: 8px 15px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            color: var(--text-primary);
+            cursor: pointer;
+            font-size: 0.85rem;
+            transition: all 0.2s;
+        }
+        .theme-btn:hover {
+            background: var(--bg-card-hover);
+        }
+        .hint {
+            font-size: 0.85rem;
+            opacity: 0.6;
+            margin-top: 10px;
+        }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <button class="theme-btn" onclick="toggleTheme()" id="themeBtn">深色</button>
+
+    <div class="container">
+        <h1>YukariConnect</h1>
+        <div class="subtitle">基于 EasyTier 的 Minecraft 联机助手</div>
+
+        <!-- Main View: Choose Role -->
+        <div class="view active" id="mainView">
+            <div class="tile-container">
+                <div class="tile tile-host" onclick="showHostInput()">
+                    <div class="tile-icon">👑</div>
+                    <div class="tile-title">我想当房主</div>
+                    <div class="tile-desc">创建房间并生成房间码</div>
+                </div>
+                <div class="tile tile-guest" onclick="showGuestInput()">
+                    <div class="tile-icon">👥</div>
+                    <div class="tile-title">我想当房客</div>
+                    <div class="tile-desc">输入房间码加入游戏</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Host Input View -->
+        <div class="view" id="hostInputView">
+            <div class="card">
+                <div class="card-title">创建房间</div>
+                <div class="input-group">
+                    <input type="text" class="input-field" id="hostName" placeholder="你的玩家名称" value="Host">
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-success" onclick="startHost()">创建房间</button>
+                    <button class="btn btn-back" onclick="showMain()">返回</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Host Loading View -->
+        <div class="view" id="hostLoadingView">
+            <div class="card">
+                <div class="loading-spinner">
+                    <div></div><div></div><div></div>
+                    <div></div><div></div><div></div>
+                    <div></div><div></div><div></div>
+                </div>
+                <div class="loading-text">正在启动房间，请稍候...</div>
+                <button class="btn btn-back" onclick="cancelAndReturn()">取消</button>
+            </div>
+        </div>
+
+        <!-- Host Result View -->
+        <div class="view" id="hostResultView">
+            <div class="card">
+                <div class="result-icon success-icon">✅</div>
+                <div class="card-title">房间创建成功</div>
+                <div class="room-code" id="roomCodeDisplay" onclick="copyRoomCode()">*****-*****</div>
+                <div class="result-desc">点击上方房间码可复制，分享给好友即可加入</div>
+                <div class="hint">请先在 Minecraft 中打开对局域网开放</div>
+                <div class="btn-group">
+                    <button class="btn btn-back" onclick="stopRoomAndReturn()">关闭房间</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Guest Input View -->
+        <div class="view" id="guestInputView">
+            <div class="card">
+                <div class="card-title">加入房间</div>
+                <div class="input-group">
+                    <input type="text" class="input-field" id="guestRoomCode" placeholder="房间码: U/XXXX-XXXX-XXXX-XXXX">
+                </div>
+                <div class="input-group">
+                    <input type="text" class="input-field" id="guestName" placeholder="你的玩家名称" value="Guest">
+                </div>
+                <div class="hint" id="joinHint"></div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="joinRoom()">加入房间</button>
+                    <button class="btn btn-back" onclick="showMain()">返回</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Guest Loading View -->
+        <div class="view" id="guestLoadingView">
+            <div class="card">
+                <div class="loading-spinner">
+                    <div></div><div></div><div></div>
+                    <div></div><div></div><div></div>
+                    <div></div><div></div><div></div>
+                </div>
+                <div class="loading-text">正在加入房间，请稍候...</div>
+                <button class="btn btn-back" onclick="cancelAndReturn()">取消</button>
+            </div>
+        </div>
+
+        <!-- Guest Result View -->
+        <div class="view" id="guestResultView">
+            <div class="card">
+                <div class="result-icon success-icon">🎮</div>
+                <div class="card-title">成功加入房间</div>
+                <div class="result-desc">请启动 Minecraft，选择多人游戏进入即可</div>
+                <div class="btn-group">
+                    <button class="btn btn-back" onclick="stopRoomAndReturn()">退出房间</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Error View -->
+        <div class="view" id="errorView">
+            <div class="card">
+                <div class="result-icon error-icon">❌</div>
+                <div class="card-title" id="errorTitle">出错了</div>
+                <div class="result-desc" id="errorDesc"></div>
+                <div class="btn-group">
+                    <button class="btn btn-back" onclick="showMain()">返回主页</button>
+                    <button class="btn btn-primary" id="errorRetryBtn" onclick="retryAction()">重试</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <a href="index.html" class="switch-link">切换到控制台模式</a>
+
+    <script>
+        const API_BASE = '';
+        let currentTheme = 'dark';
+        let pendingAction = null;
+        let pollingInterval = null;
+
+        function initTheme() {
+            const saved = localStorage.getItem('yukari-simple-theme');
+            if (saved) {
+                setTheme(saved);
+            } else {
+                const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                setTheme(prefersDark ? 'dark' : 'light');
+            }
+        }
+
+        function setTheme(theme) {
+            currentTheme = theme;
+            document.documentElement.setAttribute('data-theme', theme);
+            localStorage.setItem('yukari-simple-theme', theme);
+            document.getElementById('themeBtn').textContent = theme === 'light' ? '深色' : '浅色';
+        }
+
+        function toggleTheme() {
+            setTheme(currentTheme === 'light' ? 'dark' : 'light');
+        }
+
+        function showView(viewId) {
+            document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+            document.getElementById(viewId).classList.add('active');
+        }
+
+        function showMain() {
+            stopPolling();
+            showView('mainView');
+        }
+
+        function showHostInput() {
+            showView('hostInputView');
+        }
+
+        function showGuestInput() {
+            showView('guestInputView');
+            document.getElementById('joinHint').textContent = '';
+            document.getElementById('guestRoomCode').value = '';
+        }
+
+        async function startHost() {
+            const playerName = document.getElementById('hostName').value || 'Host';
+            pendingAction = 'host';
+            showView('hostLoadingView');
+
+            try {
+                const response = await fetch(`${API_BASE}/room/host/start`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ playerName })
+                });
+
+                if (response.ok) {
+                    startPolling();
+                } else {
+                    const error = await response.json();
+                    showError('创建房间失败', error.error || '未知错误');
+                }
+            } catch (e) {
+                showError('网络错误', e.message);
+            }
+        }
+
+        async function joinRoom() {
+            const roomCode = document.getElementById('guestRoomCode').value.trim();
+            const playerName = document.getElementById('guestName').value || 'Guest';
+
+            if (!roomCode) {
+                document.getElementById('joinHint').textContent = '请输入房间码';
+                return;
+            }
+
+            pendingAction = 'guest';
+            showView('guestLoadingView');
+
+            try {
+                const response = await fetch(`${API_BASE}/room/guest/start`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ roomCode, playerName })
+                });
+
+                if (response.ok) {
+                    startPolling();
+                } else if (response.status === 400) {
+                    showGuestInput();
+                    document.getElementById('joinHint').textContent = '房间码格式错误';
+                } else {
+                    const error = await response.json();
+                    showError('加入房间失败', error.error || '未知错误');
+                }
+            } catch (e) {
+                showError('网络错误', e.message);
+            }
+        }
+
+        async function copyRoomCode() {
+            const code = document.getElementById('roomCodeDisplay').textContent;
+            if (code && code !== '*****-*****') {
+                try {
+                    await navigator.clipboard.writeText(code);
+                    alert('房间码已复制');
+                } catch (e) {
+                    // Fallback
+                }
+            }
+        }
+
+        function showError(title, desc) {
+            document.getElementById('errorTitle').textContent = title;
+            document.getElementById('errorDesc').textContent = desc;
+            document.getElementById('errorRetryBtn').classList.add('hidden');
+            showView('errorView');
+        }
+
+        function retryAction() {
+            if (pendingAction === 'host') {
+                startHost();
+            } else if (pendingAction === 'guest') {
+                joinRoom();
+            }
+        }
+
+        async function cancelAndReturn() {
+            await fetch(`${API_BASE}/room/stop`, { method: 'POST' });
+            stopPolling();
+            showMain();
+        }
+
+        async function stopRoomAndReturn() {
+            await fetch(`${API_BASE}/room/stop`, { method: 'POST' });
+            stopPolling();
+            showMain();
+        }
+
+        function startPolling() {
+            if (pollingInterval) return;
+            updateStatus();
+            pollingInterval = setInterval(updateStatus, 1500);
+        }
+
+        function stopPolling() {
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+                pollingInterval = null;
+            }
+        }
+
+        async function updateStatus() {
+            try {
+                const response = await fetch(`${API_BASE}/room/status`);
+                const data = await response.json();
+
+                if (data.role === 'HostCenter' && data.roomCode) {
+                    document.getElementById('roomCodeDisplay').textContent = data.roomCode;
+                    showView('hostResultView');
+                } else if (data.role === 'Guest' && data.state === 'Connected') {
+                    showView('guestResultView');
+                } else if (data.state === 'Error') {
+                    showError('连接错误', '房间连接失败，请重试');
+                    document.getElementById('errorRetryBtn').classList.remove('hidden');
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        initTheme();
+    </script>
+</body>
+</html>

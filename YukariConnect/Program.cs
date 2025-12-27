@@ -2,11 +2,13 @@ using System.Text.Json.Serialization;
 using System.Reflection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
+using Microsoft.AspNetCore.Http;
 using YukariConnect.Endpoints;
 using YukariConnect.Services;
 using YukariConnect.Minecraft.Services;
 using YukariConnect.Scaffolding;
 using YukariConnect.Configuration;
+using YukariConnect.Logging;
 
 namespace YukariConnect
 {
@@ -40,6 +42,10 @@ namespace YukariConnect
             builder.Services.AddSingleton<EasyTierCliService>();
             builder.Services.AddSingleton<PublicServersService>();
 
+            // Register WebSocket infrastructure
+            builder.Services.AddSingleton<YukariConnect.WebSocket.IWebSocketManager, YukariConnect.WebSocket.WebSocketManager>();
+            builder.Services.AddSingleton<Logging.ILogBroadcaster, Logging.LogBroadcaster>();
+
             // Register Network abstraction layer
             builder.Services.AddSingleton<Network.INetworkNode, Network.EasyTierNetworkNode>();
             builder.Services.AddSingleton<Network.IPeerDiscoveryService, Network.EasyTierPeerDiscoveryService>();
@@ -56,6 +62,21 @@ namespace YukariConnect
             builder.Services.AddSingleton<RoomController>();
 
             var app = builder.Build();
+
+            // Enable WebSocket support (must be before other middleware)
+            app.UseWebSockets();
+
+            // Add WebSocket logging provider after building the app
+            // so we can resolve ILogBroadcaster from DI
+            var wsManager = app.Services.GetRequiredService<YukariConnect.WebSocket.IWebSocketManager>();
+            var broadcaster = app.Services.GetRequiredService<Logging.ILogBroadcaster>();
+            var loggerFactory = app.Services.GetService<ILoggerFactory>();
+            loggerFactory?.AddProvider(new WebSocketLoggerProvider(broadcaster));
+
+            // Log WebSocket initialization
+            var logger = loggerFactory?.CreateLogger<Program>();
+            logger?.LogInformation("WebSocket infrastructure initialized (Manager: {ManagerType}, Broadcaster: {BroadcasterType})",
+                wsManager.GetType().Name, broadcaster.GetType().Name);
 
             // Configure embedded file provider for wwwroot
             // This allows serving static files from embedded resources
@@ -131,6 +152,7 @@ namespace YukariConnect
             StateScanningEndpoint.Map(app);
             StateGuestingEndpoint.Map(app);
             LogEndpoint.Map(app);
+            LogStreamEndpoint.Map(app);
             PanicEndpoint.Map(app);
             MinecraftEndpoint.Map(app);
             RoomEndpoint.Map(app);
@@ -265,7 +287,9 @@ namespace YukariConnect
     [JsonSerializable(typeof(YukariConnect.Endpoints.RoomEndpoint.RoomErrorResponse))]
     [JsonSerializable(typeof(YukariConnect.Endpoints.ConfigEndpoint.ConfigResponse))]
     [JsonSerializable(typeof(YukariConnect.Endpoints.ConfigEndpoint.SetLauncherRequest))]
-    [JsonSerializable(typeof(YukariConnect.Endpoints.ConfigEndpoint.MessageResponse))]
+    [JsonSerializable(typeof(YukariConnect.Endpoints.ConfigEndpoint.ConfigMessageResponse))]
+    [JsonSerializable(typeof(YukariConnect.Logging.LogEntry))]
+    [JsonSerializable(typeof(YukariConnect.WebSocket.WsMessage))]
     [JsonSerializable(typeof(YukariConnect.Scaffolding.Models.PlayerPingRequest))]
     [JsonSerializable(typeof(YukariConnect.Scaffolding.Models.ScaffoldingProfile))]
     [JsonSerializable(typeof(List<YukariConnect.Scaffolding.Models.ScaffoldingProfile>))]

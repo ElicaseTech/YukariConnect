@@ -75,12 +75,41 @@ namespace YukariConnect.Services
                     return;
                 }
                 var zipPath = Path.Combine(resourceDir, assetName!);
-                using (var resp = await http.GetAsync(downloadUrl, cancellationToken))
+                _logger.LogInformation("Downloading EasyTier from {Url}...", downloadUrl);
+                using (var resp = await http.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken))
                 {
                     resp.EnsureSuccessStatusCode();
+                    var totalBytes = resp.Content.Headers.ContentLength ?? 0;
+                    var totalMB = totalBytes / (1024.0 * 1024.0);
+
+                    await using var contentStream = await resp.Content.ReadAsStreamAsync(cancellationToken);
                     await using var fs = new FileStream(zipPath, FileMode.Create, FileAccess.Write, FileShare.None);
-                    await resp.Content.CopyToAsync(fs, cancellationToken);
+
+                    var buffer = new byte[81920]; // 80KB buffer
+                    long bytesRead = 0;
+                    int lastLoggedPercent = -1;
+                    int read;
+
+                    while ((read = await contentStream.ReadAsync(buffer, cancellationToken)) > 0)
+                    {
+                        await fs.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+                        bytesRead += read;
+
+                        // Log progress every 10%
+                        if (totalBytes > 0)
+                        {
+                            var percent = (int)(bytesRead * 100 / totalBytes);
+                            if (percent >= lastLoggedPercent + 10 || percent == 100)
+                            {
+                                var downloadedMB = bytesRead / (1024.0 * 1024.0);
+                                _logger.LogInformation("Downloading EasyTier: {Percent}% ({DownloadedMB:F1} MB / {TotalMB:F1} MB)",
+                                    percent, downloadedMB, totalMB);
+                                lastLoggedPercent = percent;
+                            }
+                        }
+                    }
                 }
+                _logger.LogInformation("EasyTier download completed");
                 if (assetName!.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
                 {
                     using var fs = new FileStream(zipPath, FileMode.Open, FileAccess.Read, FileShare.Read);
