@@ -10,6 +10,7 @@ using YukariConnect.Minecraft.Services;
 using YukariConnect.Scaffolding;
 using YukariConnect.Configuration;
 using YukariConnect.Logging;
+using Serilog;
 
 namespace YukariConnect
 {
@@ -64,17 +65,23 @@ namespace YukariConnect
             // Register Scaffolding services
             builder.Services.AddSingleton<RoomController>();
 
+            // Register Serilog logger and LogService
+            var serilogLogger = new LoggerConfiguration()
+                .MinimumLevel.Verbose()
+                .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [{Type}][{Component}] {Message:lj}{NewLine}{Exception}")
+                .CreateLogger();
+            var logService = new LogService(serilogLogger);
+            builder.Services.AddSingleton<Serilog.ILogger>(serilogLogger);
+            builder.Services.AddSingleton<ILogService>(logService);
+
             // Configure logging using standard ASP.NET Core approach
             builder.Logging.ClearProviders();
 
             // Add configuration from appsettings.json BEFORE adding providers
             builder.Logging.AddConfiguration(builder.Configuration.GetSection("Logging"));
 
-            // Add console logging (will use configuration above)
-            builder.Logging.AddConsole();
-
-            // Add debug logging
-            builder.Logging.AddDebug();
+            // Register LogService logger provider (non-deferred to capture early hosting logs)
+            builder.Logging.AddProvider(new LogServiceLoggerProvider(logService));
 
             // Register WebSocket logger as a provider that will be added later
             // We need to defer this because ILogBroadcaster requires DI container
