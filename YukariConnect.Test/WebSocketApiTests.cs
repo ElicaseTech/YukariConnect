@@ -67,6 +67,83 @@ public class WebSocketApiTests : IClassFixture<CustomWebApplicationFactory>
         await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None);
     }
 
+    [Fact]
+    public async Task GetStatus_Responds_With_Both_Status_And_RoomStatus()
+    {
+        var server = _factory.Server ?? throw new InvalidOperationException("Test server not initialized");
+        var wsClient = server.CreateWebSocketClient();
+        using var socket = await wsClient.ConnectAsync(new Uri("ws://localhost/ws"), CancellationToken.None);
+
+        var req = "{\"command\":\"get_status\",\"timestamp\":0,\"data\":{}}";
+        var bytes = Encoding.UTF8.GetBytes(req);
+        await socket.SendAsync(bytes, WebSocketMessageType.Text, true, CancellationToken.None);
+
+        var buffer = new byte[8192];
+        var gotStatus = false;
+        var gotRoomStatus = false;
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        while (!cts.IsCancellationRequested && (!gotStatus || !gotRoomStatus))
+        {
+            try
+            {
+                var result = await socket.ReceiveAsync(buffer, cts.Token);
+                if (result.MessageType == WebSocketMessageType.Close)
+                    break;
+                var json = Encoding.UTF8.GetString(buffer, 0, result.Count);
+                var cmd = ExtractCommand(json);
+                if (string.Equals(cmd, "get_status_response", StringComparison.OrdinalIgnoreCase))
+                    gotStatus = true;
+                if (string.Equals(cmd, "get_room_status_response", StringComparison.OrdinalIgnoreCase))
+                    gotRoomStatus = true;
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+        }
+
+        Assert.True(gotStatus);
+        Assert.True(gotRoomStatus);
+
+        await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task Initial_Status_AutoDownlink_OnConnect()
+    {
+        var server = _factory.Server ?? throw new InvalidOperationException("Test server not initialized");
+        var wsClient = server.CreateWebSocketClient();
+        using var socket = await wsClient.ConnectAsync(new Uri("ws://localhost/ws"), CancellationToken.None);
+
+        var buffer = new byte[8192];
+        var gotStatus = false;
+        var gotRoomStatus = false;
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        while (!cts.IsCancellationRequested && (!gotStatus || !gotRoomStatus))
+        {
+            try
+            {
+                var result = await socket.ReceiveAsync(buffer, cts.Token);
+                if (result.MessageType == WebSocketMessageType.Close)
+                    break;
+                var json = Encoding.UTF8.GetString(buffer, 0, result.Count);
+                var cmd = ExtractCommand(json);
+                if (string.Equals(cmd, "get_status_response", StringComparison.OrdinalIgnoreCase))
+                    gotStatus = true;
+                if (string.Equals(cmd, "get_room_status_response", StringComparison.OrdinalIgnoreCase))
+                    gotRoomStatus = true;
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+        }
+
+        Assert.True(gotStatus);
+        Assert.True(gotRoomStatus);
+
+        await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None);
+    }
     private static string? ExtractCommand(string payload)
     {
         var key = "\"command\"";

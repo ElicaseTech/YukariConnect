@@ -49,7 +49,7 @@ public static class WebSocketApiEndpoint
 
             try
             {
-                await SendInitialDownlinks(clientId, wsManager, mcState, publicServers, etService, options, ct);
+                await SendInitialDownlinks(clientId, wsManager, roomController, mcState, publicServers, etService, options, ct);
 
                 var recvBuffer = new byte[4096];
                 while (webSocket.State == WebSocketState.Open && !ct.IsCancellationRequested)
@@ -104,8 +104,14 @@ public static class WebSocketApiEndpoint
         });
     }
 
-    private static async Task SendInitialDownlinks(Guid clientId, IWebSocketManager wsManager, MinecraftLanState mcState, PublicServersService publicServers, EasyTierCliService etService, YukariOptions options, CancellationToken ct)
+    private static async Task SendInitialDownlinks(Guid clientId, IWebSocketManager wsManager, RoomController roomController, MinecraftLanState mcState, PublicServersService publicServers, EasyTierCliService etService, YukariOptions options, CancellationToken ct)
     {
+        var initStatus = roomController.GetStatus();
+        var statusData = MapStatusToStatusResponse(initStatus);
+        await wsManager.SendApiToClientAsync(clientId, "get_status_response", statusData, 0, "", ct);
+        var roomData = MapStatusToRoomStatusResponse(initStatus);
+        await wsManager.SendApiToClientAsync(clientId, "get_room_status_response", roomData, 0, "", ct);
+
         var serversList = mcState.AllServers.Select(s => new ServerInfoDto
         {
             EndPoint = s.EndPoint.ToString(),
@@ -141,6 +147,8 @@ public static class WebSocketApiEndpoint
                 var status = roomController.GetStatus();
                 var data = MapStatusToStatusResponse(status);
                 await wsManager.SendApiToClientAsync(clientId, "get_status_response", data, 0, "", ct);
+                var roomData = MapStatusToRoomStatusResponse(status);
+                await wsManager.SendApiToClientAsync(clientId, "get_room_status_response", roomData, 0, "", ct);
                 break;
             }
             case "start_host":
