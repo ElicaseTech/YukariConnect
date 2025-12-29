@@ -140,6 +140,7 @@ public static class WebSocketApiEndpoint
     private static async Task HandleCommandAsync(Guid clientId, WsRequest request, IWebSocketManager wsManager, RoomController roomController, MinecraftLanState mcState, PublicServersService publicServers, EasyTierCliService etService, YukariOptions options, CancellationToken ct)
     {
         var cmd = request.Command?.Trim().ToLowerInvariant();
+        Console.WriteLine($"[WS] HandleCommand: {cmd}");
         switch (cmd)
         {
             case "get_status":
@@ -155,11 +156,12 @@ public static class WebSocketApiEndpoint
             {
                 var payload = Deserialize<StartHostRequestData>(request.Data);
                 ushort port = (ushort)(payload?.ScaffoldingPort > 0 ? payload!.ScaffoldingPort : options.DefaultScaffoldingPort);
-                var playerName = payload?.PlayerName ?? "Host";
+                var playerName = payload?.PlayerName ?? payload?.Player ?? "Host";
                 var lcs = payload?.LauncherCustomString;
+                var room = payload?.Room;
                 try
                 {
-                    await roomController.StartHostAsync(port, playerName, lcs, ct);
+                    await roomController.StartHostAsync(port, playerName, lcs, room, ct);
                     var status = roomController.GetStatus();
                     await wsManager.SendApiToClientAsync(clientId, "start_host_response", new StartHostResponseData
                     {
@@ -247,8 +249,10 @@ public static class WebSocketApiEndpoint
             {
                 var payload = Deserialize<GetServerByIpRequestData>(request.Data);
                 var ip = payload?.Ip ?? "";
+                Console.WriteLine($"[WS] get_server_by_ip request: '{ip}'");
                 if (!IPAddress.TryParse(ip, out var addr))
                 {
+                    Console.WriteLine("[WS] get_server_by_ip invalid ip, sending response");
                     await wsManager.SendApiToClientAsync(clientId, "get_server_by_ip_response", new ServerByIpResponseData
                     {
                         Server = new ServerInfoDto()
@@ -265,6 +269,7 @@ public static class WebSocketApiEndpoint
                     OnlinePlayers = server.PingResult?.OnlinePlayers ?? 0,
                     MaxPlayers = server.PingResult?.MaxPlayers ?? 0
                 };
+                Console.WriteLine("[WS] get_server_by_ip valid ip, sending response");
                 await wsManager.SendApiToClientAsync(clientId, "get_server_by_ip_response", new ServerByIpResponseData
                 {
                     Server = dto

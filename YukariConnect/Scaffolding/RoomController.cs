@@ -150,13 +150,16 @@ public sealed partial class RoomController : IAsyncDisposable
         ushort scaffoldingPort = 13448,
         string playerName = "Host",
         string? launcherCustomString = null,
+        string? roomCodeOverride = null,
         CancellationToken ct = default)
     {
         if (_loop != null)
             throw new InvalidOperationException("Already running.");
 
         var machineId = ScaffoldingHelpers.LoadOrCreateMachineId(_machineIdPath);
-        var roomCode = ScaffoldingHelpers.GenerateRoomCode();
+        var roomCode = string.IsNullOrWhiteSpace(roomCodeOverride)
+            ? ScaffoldingHelpers.GenerateRoomCode()
+            : roomCodeOverride!;
 
         _logger.LogInformation("Generated room code: {RoomCode}, stamp: {Stamp}",
             roomCode, ScaffoldingHelpers.BuildStamp);

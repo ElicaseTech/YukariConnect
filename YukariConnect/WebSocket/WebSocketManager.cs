@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net.WebSockets;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 
@@ -335,72 +336,7 @@ public class WebSocketManager : IWebSocketManager
         }
         else
         {
-            writer.Write("{");
-            var first = true;
-#pragma warning disable IL2075
-            var props = data.GetType().GetProperties();
-#pragma warning restore IL2075
-            foreach (var prop in props)
-            {
-                if (!first) writer.Write(",");
-                first = false;
-                writer.Write("\"");
-                writer.Write(prop.Name);
-                writer.Write("\":");
-                var value = prop.GetValue(data);
-                if (value is string s)
-                {
-                    writer.Write("\"");
-                    writer.Write(EscapeJsonString(s));
-                    writer.Write("\"");
-                }
-                else if (value is Guid g)
-                {
-                    writer.Write("\"");
-                    writer.Write(g.ToString());
-                    writer.Write("\"");
-                }
-                else if (value is int i)
-                {
-                    writer.Write(i.ToString());
-                }
-                else if (value is bool b)
-                {
-                    writer.Write(b ? "true" : "false");
-                }
-                else if (value is DateTimeOffset dto)
-                {
-                    writer.Write("\"");
-                    writer.Write(dto.ToString("o"));
-                    writer.Write("\"");
-                }
-                else if (value is IEnumerable<object> list)
-                {
-                    writer.Write("[");
-                    var f2 = true;
-                    foreach (var item in list)
-                    {
-                        if (!f2) writer.Write(",");
-                        f2 = false;
-                        if (item is string si)
-                        {
-                            writer.Write("\"");
-                            writer.Write(EscapeJsonString(si));
-                            writer.Write("\"");
-                        }
-                        else
-                        {
-                            writer.Write(item?.ToString() ?? "null");
-                        }
-                    }
-                    writer.Write("]");
-                }
-                else
-                {
-                    writer.Write(value?.ToString() ?? "null");
-                }
-            }
-            writer.Write("}");
+            writer.Write(JsonSerializer.Serialize(data));
         }
 
         writer.Write("}");

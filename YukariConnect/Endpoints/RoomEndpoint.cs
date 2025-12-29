@@ -76,6 +76,7 @@ public static class RoomEndpoint
                 request.ScaffoldingPort,
                 request.PlayerName,
                 request.LauncherCustomString,
+                null,
                 ct);
 
             return TypedResults.Ok(new MessageResponse("Host starting..."));
