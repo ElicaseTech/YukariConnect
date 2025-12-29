@@ -192,6 +192,7 @@ namespace YukariConnect
             StateGuestingEndpoint.Map(app);
             LogEndpoint.Map(app);
             LogStreamEndpoint.Map(app);
+            WebSocketApiEndpoint.Map(app);
             PanicEndpoint.Map(app);
             MinecraftEndpoint.Map(app);
             RoomEndpoint.Map(app);

@@ -40,10 +40,10 @@ public interface IWebSocketManager
     /// </summary>
     void Broadcast(string type, object? data);
 
-    /// <summary>
-    /// Send a message to a specific client.
-    /// </summary>
+    void BroadcastApi(string command, object? data, int code = 0, string message = "");
+
     Task SendToClientAsync(Guid clientId, string type, object? data, CancellationToken ct);
+    Task SendApiToClientAsync(Guid clientId, string command, object? data, int code, string message, CancellationToken ct);
 }
 
 /// <summary>
@@ -115,6 +115,52 @@ public class WebSocketManager : IWebSocketManager
         }
     }
 
+    public void BroadcastApi(string command, object? data, int code = 0, string message = "")
+    {
+        var json = SerializeApiEnvelope(command, data, code, message);
+        if (json == null) return;
+
+        var deadClients = new List<Guid>();
+
+        foreach (var (clientId, ws) in _clients)
+        {
+            try
+            {
+                if (ws.State == System.Net.WebSockets.WebSocketState.Open)
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await ws.SendAsync(
+                                new ArraySegment<byte>(json, 0, json.Length),
+                                System.Net.WebSockets.WebSocketMessageType.Text,
+                                true,
+                                CancellationToken.None
+                            );
+                        }
+                        catch
+                        {
+                        }
+                    });
+                }
+                else
+                {
+                    deadClients.Add(clientId);
+                }
+            }
+            catch
+            {
+                deadClients.Add(clientId);
+            }
+        }
+
+        foreach (var clientId in deadClients)
+        {
+            _clients.TryRemove(clientId, out _);
+        }
+    }
+
     public async Task SendToClientAsync(Guid clientId, string type, object? data, CancellationToken ct)
     {
         if (!_clients.TryGetValue(clientId, out var ws))
@@ -133,6 +179,31 @@ public class WebSocketManager : IWebSocketManager
         );
     }
 
+    public async Task SendApiToClientAsync(Guid clientId, string command, object? data, int code, string message, CancellationToken ct)
+    {
+        if (!_clients.TryGetValue(clientId, out var ws))
+        {
+            throw new ArgumentException($"Client {clientId} not found");
+        }
+
+        var json = SerializeApiEnvelope(command, data, code, message);
+        if (json == null) return;
+
+        try
+        {
+            await ws.SendAsync(
+                new ArraySegment<byte>(json, 0, json.Length),
+                System.Net.WebSockets.WebSocketMessageType.Text,
+                true,
+                ct
+            );
+        }
+        catch
+        {
+            // Suppress send errors (client may have disconnected)
+        }
+    }
+
     private static byte[]? SerializeMessage(string type, object? data)
     {
         try
@@ -141,6 +212,22 @@ public class WebSocketManager : IWebSocketManager
             // Use UTF8Encoding without BOM to avoid JSON parsing issues
             using var writer = new System.IO.StreamWriter(ms, new System.Text.UTF8Encoding(false));
             WriteWsMessage(writer, type, data);
+            writer.Flush();
+            return ms.ToArray();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static byte[]? SerializeApiEnvelope(string command, object? data, int code, string message)
+    {
+        try
+        {
+            using var ms = new System.IO.MemoryStream();
+            using var writer = new System.IO.StreamWriter(ms, new System.Text.UTF8Encoding(false));
+            WriteWsApiEnvelope(writer, command, data, code, message);
             writer.Flush();
             return ms.ToArray();
         }
@@ -204,6 +291,109 @@ public class WebSocketManager : IWebSocketManager
                 else if (value is int i)
                 {
                     writer.Write(i.ToString());
+                }
+                else
+                {
+                    writer.Write(value?.ToString() ?? "null");
+                }
+            }
+            writer.Write("}");
+        }
+
+        writer.Write("}");
+    }
+
+    private static void WriteWsApiEnvelope(System.IO.StreamWriter writer, string command, object? data, int code, string message)
+    {
+        writer.Write("{\"code\":");
+        writer.Write(code.ToString());
+        writer.Write(",\"message\":\"");
+        writer.Write(EscapeJsonString(message ?? string.Empty));
+        writer.Write("\",\"timestamp\":");
+        writer.Write(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString());
+        writer.Write(",\"command\":\"");
+        writer.Write(EscapeJsonString(command));
+        writer.Write("\",\"data\":");
+
+        if (data is null)
+        {
+            writer.Write("{}");
+        }
+        else if (data is YukariConnect.WebSocket.Models.LogResponseData log)
+        {
+            writer.Write("{\"logLevel\":\"");
+            writer.Write(EscapeJsonString(log.LogLevel));
+            writer.Write("\",\"LogType\":\"");
+            writer.Write(EscapeJsonString(log.LogType));
+            writer.Write("\",\"logTime\":\"");
+            writer.Write(log.LogTime.ToString("o"));
+            writer.Write("\",\"logComponent\":\"");
+            writer.Write(EscapeJsonString(log.LogComponent));
+            writer.Write("\",\"logMessage\":\"");
+            writer.Write(EscapeJsonString(log.LogMessage));
+            writer.Write("\"}");
+        }
+        else
+        {
+            writer.Write("{");
+            var first = true;
+#pragma warning disable IL2075
+            var props = data.GetType().GetProperties();
+#pragma warning restore IL2075
+            foreach (var prop in props)
+            {
+                if (!first) writer.Write(",");
+                first = false;
+                writer.Write("\"");
+                writer.Write(prop.Name);
+                writer.Write("\":");
+                var value = prop.GetValue(data);
+                if (value is string s)
+                {
+                    writer.Write("\"");
+                    writer.Write(EscapeJsonString(s));
+                    writer.Write("\"");
+                }
+                else if (value is Guid g)
+                {
+                    writer.Write("\"");
+                    writer.Write(g.ToString());
+                    writer.Write("\"");
+                }
+                else if (value is int i)
+                {
+                    writer.Write(i.ToString());
+                }
+                else if (value is bool b)
+                {
+                    writer.Write(b ? "true" : "false");
+                }
+                else if (value is DateTimeOffset dto)
+                {
+                    writer.Write("\"");
+                    writer.Write(dto.ToString("o"));
+                    writer.Write("\"");
+                }
+                else if (value is IEnumerable<object> list)
+                {
+                    writer.Write("[");
+                    var f2 = true;
+                    foreach (var item in list)
+                    {
+                        if (!f2) writer.Write(",");
+                        f2 = false;
+                        if (item is string si)
+                        {
+                            writer.Write("\"");
+                            writer.Write(EscapeJsonString(si));
+                            writer.Write("\"");
+                        }
+                        else
+                        {
+                            writer.Write(item?.ToString() ?? "null");
+                        }
+                    }
+                    writer.Write("]");
                 }
                 else
                 {

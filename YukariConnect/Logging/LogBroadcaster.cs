@@ -38,7 +38,14 @@ public class LogBroadcaster : ILogBroadcaster
 
     public void Broadcast(DateTimeOffset timestamp, string level, string category, string message)
     {
-        var logEntry = new LogEntry(timestamp, level, category, message);
-        _wsManager.Broadcast("log", logEntry);
+        var data = new YukariConnect.WebSocket.Models.LogResponseData
+        {
+            LogLevel = level,
+            LogType = "AspNetCore",
+            LogTime = timestamp,
+            LogComponent = category,
+            LogMessage = message
+        };
+        _wsManager.BroadcastApi("get_log_response", data, 0, string.Empty);
     }
 }
