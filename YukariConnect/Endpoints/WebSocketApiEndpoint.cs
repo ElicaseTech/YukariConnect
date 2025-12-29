@@ -54,43 +54,60 @@ public static class WebSocketApiEndpoint
                 var recvBuffer = new byte[4096];
                 while (webSocket.State == WebSocketState.Open && !ct.IsCancellationRequested)
                 {
+                    // Use StringBuilder to handle fragmented messages
+                    var messageBuilder = new StringBuilder();
                     System.Net.WebSockets.WebSocketReceiveResult result;
-                    try
+                    do
                     {
-                        result = await webSocket.ReceiveAsync(new ArraySegment<byte>(recvBuffer), ct);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        break;
-                    }
-                    catch (System.IO.IOException)
-                    {
-                        break;
-                    }
-                    catch (ObjectDisposedException)
-                    {
-                        break;
-                    }
-                    catch (System.Net.WebSockets.WebSocketException)
-                    {
-                        break;
-                    }
-                    if (result.MessageType == WebSocketMessageType.Close)
-                    {
-                        await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", ct);
-                        break;
-                    }
+                        try
+                        {
+                            result = await webSocket.ReceiveAsync(new ArraySegment<byte>(recvBuffer), ct);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            break;
+                        }
+                        catch (System.IO.IOException)
+                        {
+                            break;
+                        }
+                        catch (ObjectDisposedException)
+                        {
+                            break;
+                        }
+                        catch (System.Net.WebSockets.WebSocketException)
+                        {
+                            break;
+                        }
 
-                    if (result.MessageType != WebSocketMessageType.Text) continue;
+                        if (result.MessageType == WebSocketMessageType.Close)
+                        {
+                            await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", ct);
+                            return;
+                        }
 
-                    var json = Encoding.UTF8.GetString(recvBuffer, 0, result.Count);
+                        if (result.MessageType != WebSocketMessageType.Text) continue;
+
+                        messageBuilder.Append(Encoding.UTF8.GetString(recvBuffer, 0, result.Count));
+                    } while (!result.EndOfMessage);
+
+                    if (webSocket.State != WebSocketState.Open) break;
+
+                    var json = messageBuilder.ToString();
                     WsRequest? request = null;
                     try
                     {
                         request = JsonSerializer.Deserialize(json, WebSocketApiJsonContext.Default.WsRequest);
                     }
-                    catch { }
-                    if (request == null) continue;
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[WS] Failed to deserialize request: {ex.Message}, JSON: {json}");
+                    }
+                    if (request == null)
+                    {
+                        Console.WriteLine($"[WS] Request is null, skipping. JSON: {json}");
+                        continue;
+                    }
 
                     await HandleCommandAsync(clientId, request, wsManager, roomController, mcState, publicServers, etService, options, ct);
                 }

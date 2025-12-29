@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 
+using YukariConnect.WebSocket.Models;
 namespace YukariConnect.WebSocket;
 
 /// <summary>
@@ -320,7 +321,7 @@ public class WebSocketManager : IWebSocketManager
         {
             writer.Write("{}");
         }
-        else if (data is YukariConnect.WebSocket.Models.LogResponseData log)
+        else if (data is LogResponseData log)
         {
             writer.Write("{\"logLevel\":\"");
             writer.Write(EscapeJsonString(log.LogLevel));
@@ -336,7 +337,32 @@ public class WebSocketManager : IWebSocketManager
         }
         else
         {
-            writer.Write(JsonSerializer.Serialize(data));
+            // Use JsonSerializerContext for AOT compatibility
+            string jsonData = data switch
+            {
+                StatusResponseData d =>
+                    JsonSerializer.Serialize(d, WebSocketApiJsonContext.Default.StatusResponseData),
+                RoomStatusResponseData d =>
+                    JsonSerializer.Serialize(d, WebSocketApiJsonContext.Default.RoomStatusResponseData),
+                BasicStatusData d =>
+                    JsonSerializer.Serialize(d, WebSocketApiJsonContext.Default.BasicStatusData),
+                StartHostResponseData d =>
+                    JsonSerializer.Serialize(d, WebSocketApiJsonContext.Default.StartHostResponseData),
+                ConfigResponseData d =>
+                    JsonSerializer.Serialize(d, WebSocketApiJsonContext.Default.ConfigResponseData),
+                MetadataResponseData d =>
+                    JsonSerializer.Serialize(d, WebSocketApiJsonContext.Default.MetadataResponseData),
+                ServersListResponseData d =>
+                    JsonSerializer.Serialize(d, WebSocketApiJsonContext.Default.ServersListResponseData),
+                ServerByIpResponseData d =>
+                    JsonSerializer.Serialize(d, WebSocketApiJsonContext.Default.ServerByIpResponseData),
+                MinecraftStatusResponseData d =>
+                    JsonSerializer.Serialize(d, WebSocketApiJsonContext.Default.MinecraftStatusResponseData),
+                PublicServersListResponseData d =>
+                    JsonSerializer.Serialize(d, WebSocketApiJsonContext.Default.PublicServersListResponseData),
+                _ => JsonSerializer.Serialize(data)
+            };
+            writer.Write(jsonData);
         }
 
         writer.Write("}");
